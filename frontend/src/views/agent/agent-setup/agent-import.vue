@@ -99,7 +99,6 @@ import FilterIpTips from '@/components/common/filter-ip-tips.vue';
 import mixin from '@/components/common/filter-ip-mixin';
 import FilterDialog from '@/components/common/filter-dialog.vue';
 import ParserExcel from '../components/parser-excel.vue';
-// import getTipsTemplate from '../config/tips-template'
 import { tableConfig, tableManualConfig } from '../config/importTableConfig';
 import { editConfig, editManualConfig } from '../config/editTableConfig';
 import { addListener, removeListener } from 'resize-detector';

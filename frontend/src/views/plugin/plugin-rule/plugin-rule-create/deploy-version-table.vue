@@ -110,6 +110,7 @@ export default class DeployVersionTable extends Vue {
     const oldRow = this.tableData[this.currentRowIndex];
     this.changedRow.disabled = oldRow.disabled;
     this.changedRow.selection = oldRow.selection;
+    this.changedRow.is_preselection = oldRow.is_preselection;
     this.tableData.splice(this.currentRowIndex, 1, this.changedRow);
     this.tableData.forEach((item, index) => {
       this.tableRef.toggleRowSelection(item, index === this.currentRowIndex

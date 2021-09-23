@@ -56,5 +56,12 @@ export default [
         page: AGENT_OPERATE,
       },
     },
+    beforeEnter(to: Route, from: Route, next) {
+      const { tableData = [] } = to.params;
+      if (!tableData.length) {
+        next({ name: 'agentStatus', replace: true });
+      }
+      next();
+    },
   },
 ] as RouteConfig[];

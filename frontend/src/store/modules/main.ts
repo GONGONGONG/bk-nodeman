@@ -1,6 +1,5 @@
 import { VuexModule, Module, Action, Mutation } from 'vuex-module-decorators';
 import Vue from 'vue';
-import http from '@/api';
 import navList from '@/router/navigation-config';
 import { retrieveBiz, fetchTopo } from '@/api/modules/cmdb';
 import { retrieveGlobalSettings } from '@/api/modules/meta';
@@ -28,8 +27,6 @@ const permissionMethodsMap: Dictionary = {
 export default class Main extends VuexModule {
   public nmMainLoading = false; // 全局可视区域加载
   public mainContentLoading = false;
-  // 系统当前登录用户
-  public user = {};
   // 导航信息
   public navList: INavConfig [] = navList;
   // 当前一级导航name
@@ -87,16 +84,6 @@ export default class Main extends VuexModule {
   @Mutation
   public setNmMainLoading(loading: boolean) {
     this.nmMainLoading = loading;
-  }
-  /**
-   * 更新当前用户 StateUser
-   *
-   * @param {Object} state store state
-   * @param {Object} user StateUser 对象
-   */
-  @Mutation
-  public updateUser(user: any) {
-    this.user = Object.assign({}, user);
   }
   /**
    * 更新当前一级导航信息
@@ -273,30 +260,6 @@ export default class Main extends VuexModule {
   @Mutation
   public updateRouterBackName(name = '') {
     this.routerBackName = name;
-  }
-  /**
-   * 获取用户信息
-   *
-   * @param {Object} context store 上下文对象 { commit, state, dispatch }
-   *
-   * @return {Promise} promise 对象
-   */
-  @Action
-  public userInfo(context: any, config = {}) {
-    // ajax 地址为 USER_INFO_URL，如果需要 mock，那么只需要在 url 后加上 AJAX_MOCK_PARAM 的参数，
-    // 参数值为 mock/ajax 下的路径和文件名，然后加上 invoke 参数，参数值为 AJAX_MOCK_PARAM 参数指向的文件里的方法名
-    // 例如本例子里，ajax 地址为 USER_INFO_URL，mock 地址为 USER_INFO_URL?AJAX_MOCK_PARAM=index&invoke=getUserInfo
-
-    // 后端提供的地址
-    // const url = USER_INFO_URL
-    // mock 的地址，示例先使用 mock 地址
-    const mockUrl = `${USER_INFO_UR
-      + (USER_INFO_URL.indexOf('?') === -1 ? '?' : '&') + AJAX_MOCK_PARAM}=index&invoke=getUserInfo`;
-    return http.get(mockUrl, {}, config).then((response) => {
-      const userData = response.data || {};
-      context.commit('updateUser', userData);
-      return userData;
-    });
   }
   /**
    * 获取业务范围列表
