@@ -8,30 +8,6 @@
     @page-change="handlePagetionChage(arguments, 'page')"
     @page-limit-change="handlePagetionChage(arguments, 'limit')"
     class="static-table">
-    <bk-table-column
-      :render-header="renderHeader"
-      width="70"
-      v-if="selection">
-      <template #default="{ row }">
-        <div v-bk-tooltips="{
-          placement: 'right',
-          content: getTooltipsContent(row),
-          disabled: !showStatus,
-          delay: 500
-        }">
-          <bk-checkbox
-            v-model="row.selection"
-            :disabled="row.disabled">
-          </bk-checkbox>
-          <span v-if="showStatus">
-            <i class="nodeman-icon nc-minus-line"
-               v-if="isDeleteHost(row)"></i>
-            <i class="nodeman-icon nc-plus-line"
-               v-else-if="isAddHost(row)"></i>
-          </span>
-        </div>
-      </template>
-    </bk-table-column>
     <bk-table-column :label="$t('主机IP')" prop="inner_ip">
       <template #default="{ row }">
         <span v-bk-tooltips="{
@@ -64,9 +40,7 @@
 </template>
 <script lang="ts">
 import { Vue, Component, Prop, Emit, Watch } from 'vue-property-decorator';
-import ColumnCheck from '@/views/agent/components/column-check.vue';
-import { CreateElement } from 'vue';
-import { IPagination } from '@/types/plugin/plugin-type';
+import { IPagination } from '@/types';
 
 @Component({ name: 'static-content-table' })
 export default class StaticContentTable extends Vue {
@@ -113,27 +87,6 @@ export default class StaticContentTable extends Vue {
       return { page: 1, pagesize: arg[0] };
     }
     return { page: arg[0], pagesize: this.pagination.limit };
-  }
-
-  public renderHeader(h: CreateElement) {
-    return h(ColumnCheck, {
-
-    });
-  }
-  public isAddHost(row: any) {
-    return !this.selections.includes(row.id) && !!row.selection;
-  }
-  public isDeleteHost(row: any) {
-    return this.selections.includes(row.id) && !row.selection;
-  }
-  public getTooltipsContent(row: any) {
-    if (this.isDeleteHost(row)) {
-      return this.$t('待卸载，点击恢复');
-    }
-    if (!this.isAddHost(row) && row.selection) {
-      return this.$t('已部署，取消后将会卸载');
-    }
-    return '';
   }
 }
 </script>

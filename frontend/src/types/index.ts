@@ -308,3 +308,10 @@ export interface IKeyItem {
   description: string
   content: string
 }
+export interface IDropdownItem {
+  id: number | string
+  name: string
+  disabled?: boolean
+}
+
+export type ICheckType = 'current' | 'across';

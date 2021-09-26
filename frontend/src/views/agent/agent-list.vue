@@ -5,7 +5,7 @@
       <!--agent操作-->
       <div class="agent-operate-left">
         <!--安装Agent-->
-        <auth-component
+        <AuthComponent
           tag="div"
           :authorized="authority.operate"
           :apply-info="[{ action: 'agent_operate' }]">
@@ -13,121 +13,55 @@
             <bk-button
               v-if="!!selectionCount"
               ext-cls="setup-btn"
-              slot="dropdown-trigger"
               theme="primary"
               :disabled="disabled"
               v-test="'install'"
-              @click="triggerHandler({ type: 'reinstall' })">
-              <span class="icon-down-wrapper">
-                <span>{{ $t('安装Agent') }}</span>
-              </span>
+              @click="triggerHandler({ id: 'reinstall' })">
+              {{ $t('安装Agent') }}
             </bk-button>
-            <bk-dropdown-menu
+            <BtnDropdown
               v-else
-              trigger="click"
-              font-size="medium"
+              theme="primary"
+              ext-cls="setup-btn"
               :disabled="disabled"
-              @show="handleDropdownShow('isSetupDropdownShow')"
-              @hide="handleDropdownHide('isSetupDropdownShow')">
-              <bk-button
-                ext-cls="setup-btn"
-                slot="dropdown-trigger"
-                theme="primary"
-                :disabled="disabled"
-                v-test="'install'">
-                <span class="icon-down-wrapper">
-                  <span>{{ $t('安装Agent') }}</span>
-                  <i :class="['bk-icon icon-angle-down setup-btn-icon', { 'icon-flip': isSetupDropdownShow }]"></i>
-                </span>
-              </bk-button>
-              <ul class="bk-dropdown-list" slot="dropdown-content" v-test="'installUl'">
-                <li>
-                  <a @click.prevent="triggerHandler({ type: 'setup' })" v-test.common="'moreItem.setup'">
-                    {{ $t('普通安装') }}
-                  </a>
-                </li>
-                <li>
-                  <a @click.prevent="triggerHandler({ type: 'import' })" v-test.common="'moreItem.import'">
-                    {{ $t('Excel导入安装') }}
-                  </a>
-                </li>
-              </ul>
-            </bk-dropdown-menu>
+              :btn-text="$t('安装Agent')"
+              :menu-list="[
+                { id: 'setup',name: $t('普通安装') },
+                { id: 'import',name: $t('Excel导入安装') },
+              ]"
+              @menu-click="triggerHandler">
+            </BtnDropdown>
           </template>
-        </auth-component>
+        </AuthComponent>
+
         <!--复制IP-->
-        <bk-dropdown-menu
-          trigger="click"
-          ref="copyIp"
-          font-size="medium"
+        <BtnDropdown
           class="ml10"
-          :disabled="loadingCopyBtn || table.data.length === 0"
-          @show="handleDropdownShow('isCopyDropdownShow')"
-          @hide="handleDropdownHide('isCopyDropdownShow')">
-          <bk-button
-            class="dropdown-btn"
-            slot="dropdown-trigger"
-            :loading="loadingCopyBtn"
-            :disabled="table.data.length === 0"
-            v-test="'copy'">
-            <span class="icon-down-wrapper">
-              <span>{{ $t('复制') }}</span>
-              <i :class="['bk-icon icon-angle-down', { 'icon-flip': isCopyDropdownShow }]"></i>
-            </span>
-          </bk-button>
-          <ul class="bk-dropdown-list" slot="dropdown-content">
-            <li>
-              <a :class="{ 'item-disabled': selectionCount === 0 }"
-                 v-test.common="'moreItem.checkedIp'"
-                 @click.prevent.stop="triggerHandler({
-                   type: 'checkedIp',
-                   disabled: selectionCount === 0
-                 })">
-                {{ $t('勾选IP') }}
-              </a>
-            </li>
-            <li>
-              <a @click.prevent="triggerHandler({ type: 'allIp' })" v-test.common="'moreItem.allIp'">
-                {{ $t('所有IP') }}
-              </a>
-            </li>
-          </ul>
-        </bk-dropdown-menu>
+          :loading="copyBtnLoading"
+          :disabled="copyBtnLoading || table.data.length === 0"
+          :btn-text="$t('复制')"
+          :menu-list="[
+            { id: 'checkedIp',name: $t('勾选IP'), disabled: selectionCount === 0 },
+            { id: 'allIp',name: $t('所有IP') },
+          ]"
+          @menu-click="triggerHandler">
+        </BtnDropdown>
+
         <!--批量操作-->
-        <bk-dropdown-menu
-          trigger="click"
-          ref="batch"
-          font-size="medium"
-          class="ml10"
-          :disabled="!isSingleHosts || !(indeterminate || isAllChecked)"
-          @show="handleDropdownShow('isbatchDropdownShow')"
-          @hide="handleDropdownHide('isbatchDropdownShow')">
-          <bk-button
-            slot="dropdown-trigger"
+        <bk-popover
+          placement="bottom"
+          :delay="400"
+          :disabled="loading || !(!isSingleHosts && (indeterminate || isAllChecked))"
+          :content="$t('不同安装方式的Agent不能统一批量操作')">
+          <BtnDropdown
+            class="ml10"
             :disabled="!isSingleHosts || !(indeterminate || isAllChecked)"
-            v-test="'operate'">
-            <bk-popover
-              placement="bottom"
-              :delay="400"
-              :disabled="!(!isSingleHosts && (indeterminate || isAllChecked))"
-              :content="$t('不同安装方式的Agent不能统一批量操作')">
-              <span class="icon-down-wrapper">
-                <span>{{ $t('批量') }}</span>
-                <i :class="['bk-icon icon-angle-down', { 'icon-flip': isbatchDropdownShow }]"></i>
-              </span>
-            </bk-popover>
-          </bk-button>
-          <ul class="bk-dropdown-list" slot="dropdown-content">
-            <template v-for="item in operate">
-              <li v-if="!item.single" :key="item.id" :class="{ 'disabled': getBatchMenuStaus(item) }">
-                <a @click.prevent="!getBatchMenuStaus(item) && triggerHandler({ type: item.id })"
-                   v-test.common="`moreItem.${item.id}`">
-                  {{ item.name }}
-                </a>
-              </li>
-            </template>
-          </ul>
-        </bk-dropdown-menu>
+            :btn-text="$t('批量')"
+            :menu-list="batchMoreList"
+            @menu-click="triggerHandler">
+          </BtnDropdown>
+        </bk-popover>
+
         <!--选择业务-->
         <bk-biz-select
           v-model="search.biz"
@@ -138,6 +72,7 @@
           :placeholder="$t('全部业务')"
           @change="handleBizChange">
         </bk-biz-select>
+
         <bk-popover class="ml10 mr10 topo-cascade" :delay="200" :disabled="search.biz.length === 1">
           <bk-cascade
             clearable
@@ -156,6 +91,7 @@
           </div>
         </bk-popover>
       </div>
+
       <!--agent搜索-->
       <div class="agent-operate-right">
         <bk-search-select
@@ -171,6 +107,7 @@
         </bk-search-select>
       </div>
     </section>
+
     <!--agent列表-->
     <section class="agent-content" v-bkloading="{ isLoading: loading }">
       <bk-table
@@ -524,12 +461,13 @@
 import { Component, Watch, Ref, Mixins, Prop } from 'vue-property-decorator';
 import { CreateElement } from 'vue';
 import { MainStore, AgentStore } from '@/store/index';
-import { IBizValue, IBkColumn, ISortData, ITabelFliter } from '@/types';
+import { IBizValue, IBkColumn, ISortData, ITabelFliter, IDropdownItem } from '@/types';
 import {
   IAgent, IAgentHost, IAgentJob, IAgentTable, IAgentTopo,
   IOperateItem, IAgentSearchIp, IAgentSearch,
 } from '@/types/agent/agent-type';
 
+import BtnDropdown from '@/components/common/btn-dropdown.vue';
 import ColumnSetting from '@/components/common/column-setting.vue';
 import ColumnCheck from './components/column-check.vue';
 import BkFooter from '@/components/common/footer.vue';
@@ -541,15 +479,14 @@ import { bus } from '@/common/bus';
 import { STORAGE_KEY_COL } from '@/config/storage-key';
 
 @Component({
-  name: 'agent-list',
+  name: 'AgentList',
   components: {
     BkFooter,
+    BtnDropdown,
   },
 })
 export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, authorityMixin())<IAgent> {
   @Ref('topoSelect') private readonly topoSelect!: any;
-  @Ref('copyIp') private readonly copyIp!: any;
-  @Ref('batch') private readonly batch!: any;
   @Ref('searchSelect') private readonly searchSelect!: any;
   @Ref('agentTable') private readonly agentTable!: any;
 
@@ -578,7 +515,7 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
   // 跨页全选loading
   private checkLoading = false;
   // ip复制按钮加载状态
-  private loadingCopyBtn = false;
+  private copyBtnLoading = false;
   // 列表字段显示配置
   private filter: { [key: string]: ITabelFliter } = {
     inner_ip: {
@@ -680,17 +617,6 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       id: 'bt_speed_limit',
     },
   };
-  // 是否显示复制按钮下拉菜单
-  private isCopyDropdownShow = false;
-  // 是否显示批量按钮下拉菜单
-  private isbatchDropdownShow = false;
-  private isSetupDropdownShow = false;
-  // 状态map
-  private statusMap = {
-    running: this.$t('正常'),
-    terminated: this.$t('异常'),
-    unknown: this.$t('未知'),
-  };
   private osMap = {
     LINUX: 'Linux',
     WINDOWS: 'Windows',
@@ -699,70 +625,25 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
   };
   // 批量操作
   private operate: IOperateItem[] = [
-    {
-      id: 'reinstall',
-      name: window.i18n.t('安装重装'),
-      disabled: false,
-      show: false,
-    },
-    {
-      id: 'upgrade',
-      name: window.i18n.t('升级'),
-      disabled: false,
-      show: true,
-    },
-    {
-      id: 'uninstall',
-      name: window.i18n.t('卸载'),
-      disabled: false,
-      show: true,
-    },
-    {
-      id: 'remove',
-      name: window.i18n.t('移除'),
-      disabled: false,
-      show: true,
-    },
-    {
-      id: 'reload',
-      name: window.i18n.t('重载配置'),
-      disabled: false,
-      show: true,
-    },
-    {
-      id: 'reboot',
-      name: window.i18n.t('重启'),
-      disabled: false,
-      show: true,
-    },
-    {
-      id: 'log',
-      name: window.i18n.t('最新执行日志'),
-      disabled: false,
-      show: true,
-      single: true,
-    },
+    { id: 'reinstall', name: window.i18n.t('安装重装'), disabled: false, show: false },
+    { id: 'upgrade', name: window.i18n.t('升级'), disabled: false, show: true },
+    { id: 'uninstall', name: window.i18n.t('卸载'), disabled: false, show: true },
+    { id: 'remove', name: window.i18n.t('移除'), disabled: false, show: true },
+    { id: 'reload', name: window.i18n.t('重载配置'), disabled: false, show: true },
+    { id: 'reboot', name: window.i18n.t('重启'), disabled: false, show: true },
+    { id: 'log', name: window.i18n.t('最新执行日志'), disabled: false, show: true, single: true },
   ];
   // 搜索相关
-  private search: {
-    biz: number[]
-    topo: string[]
-  } = {
+  private search: { biz: number[], topo: string[] } = {
     biz: [],
     topo: [],
   };
-  // 集群/模块 topo
-  private topoBizFormat: { [key: string]: IAgentTopo } = {};
-  // topo选中的String
-  private topoSelectStr = '';
-  // 选择的层级
-  private topoSelectChild: IAgentTopo[] = [];
-  // 搜索防抖
-  private initAgentListDebounce: Function = function () {};
-  // 是否是跨页全选
-  private isSelectedAllPages = false;
-  // 标记删除数组
-  private markDeleteArr: IAgentHost[] = [];
+  private topoBizFormat: { [key: string]: IAgentTopo } = {};  // 集群/模块 topo
+  private topoSelectStr = '';  // topo选中的String
+  private topoSelectChild: IAgentTopo[] = []; // topo选择的层级
+  private initAgentListDebounce: Function = function () {}; // 搜索防抖
+  private isSelectedAllPages = false; // 是否是跨页全选
+  private markDeleteArr: IAgentHost[] = []; // 标记删除数组
   private ipRegx = new RegExp('^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$');
   private localMark = '_agent';
   private operateBiz: IBizValue[] =[]; // 有操作权限的业务
@@ -882,7 +763,7 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       this.searchSelectValue.push({
         id: 'inner_ip',
         name: 'IP',
-        values: this.ipList.map(item => ({ id: item, name: item })),
+        values: this.ipList.map(item => ({ id: item, name: item, checked: false })),
       });
     }
   }
@@ -1121,7 +1002,6 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     if (this.isSelectedAllPages) {
       params.exclude_hosts = this.markDeleteArr.map(item => item.bk_host_id);
     }
-
     return Object.assign(params, this.getCommonCondition());
   }
   /**
@@ -1132,7 +1012,6 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       pagesize: -1,
       only_ip: true,
     };
-
     return Object.assign(params, this.getCommonCondition());
   }
   /**
@@ -1173,7 +1052,6 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
    * 业务变更
    */
   private handleBizChange(newValue: number[]) {
-    console.log(newValue);
     if (newValue.length !== 1) {
       // topo未选择时 清空biz不会触发 cascade组件change事件
       if (this.search.topo.length) {
@@ -1190,9 +1068,8 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     this.table.pagination.current = 1;
     this.initAgentListDebounce();
   }
-  /**
-   * 拉取拓扑
-   */
+
+  // 拉取拓扑
   private handleTopoChange(toggle: boolean) {
     if (toggle) {
       this.topoSelectStr = this.search.topo.join(',');
@@ -1203,11 +1080,8 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       }
     }
   }
-  /**
-   * 拿到最后一次选择的层级
-   */
+  // 拿到最后一次选择的层级
   private topoSelectchange(newValue: number[], oldValue: number[], selectList: IAgentTopo[]) {
-    console.log(newValue, oldValue, selectList);
     this.topoSelectChild = selectList;
     // 组件bug，clear事件并未派发出来
     if (!newValue.length) {
@@ -1237,15 +1111,12 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       resolve(item);
     }
   }
-  /**
-   * 安装 Agent（普通安装）
-   */
+
+  // 安装 Agent（普通安装）
   private handleSetupAgent() {
     this.$router.push({ name: 'agentSetup' });
   }
-  /**
-   * 安装 Agent（Excel 导入）
-   */
+  // 安装 Agent（Excel 导入）
   private handleImportAgent() {
     this.$router.push({ name: 'agentImport' });
   }
@@ -1292,11 +1163,10 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
   private handleDropdownHide(value: string) {
     this[value] = false;
   }
-  /**
-   * 复制勾选 IP
-   */
+
+  // 复制勾选 IP
   private async handleCopyCheckedIp() {
-    this.loadingCopyBtn = true;
+    this.copyBtnLoading = true;
     let data = {
       total: this.selection.length,
       list: this.selection.map(item => item.inner_ip),
@@ -1310,13 +1180,11 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     if (result) {
       this.$bkMessage({ theme: 'success', message: this.$t('IP复制成功', { num: data.total }) });
     }
-    this.loadingCopyBtn = false;
+    this.copyBtnLoading = false;
   }
-  /**
-   * 复制所有 IP
-   */
+  // 复制所有 IP
   private async handleCopyAllIp() {
-    this.loadingCopyBtn = true;
+    this.copyBtnLoading = true;
     const data = await AgentStore.getHostIp(this.getAllIpCondition() as IAgentSearchIp);
     const allIpText = data.list.join('\n');
     if (!allIpText) return;
@@ -1324,16 +1192,16 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     if (result) {
       this.$bkMessage({ theme: 'success', message: this.$t('IP复制成功', { num: data.total }) });
     }
-    this.loadingCopyBtn = false;
+    this.copyBtnLoading = false;
   }
   /**
    * 操作
    * @param {Object} item
    */
-  private triggerHandler(item: { type: string, disabled?: boolean }) {
+  private triggerHandler(item: IDropdownItem) {
     if (item.disabled) return;
     const data = this.isSelectedAllPages ? this.markDeleteArr : this.selection;
-    switch (item.type) {
+    switch (item.id) {
       // 复制IP
       case 'checkedIp':
         this.handleCopyCheckedIp();
@@ -1349,7 +1217,7 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       case 'uninstall':
       case 'upgrade':
       case 'remove':
-        this.handleOperate(item.type, data, true);
+        this.handleOperate(item.id, data, true);
         break;
         // 普通安装
       case 'setup':
@@ -1363,9 +1231,8 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     this.copyIp.hide();
     this.batch.hide();
   }
-  /**
-   * row勾选事件
-   */
+
+  // row勾选事件
   private handleRowCheck(arg: boolean[], row: IAgentHost) {
     // 跨页全选采用标记删除法
     if (this.isSelectedAllPages) {
@@ -1379,8 +1246,7 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       }
     }
     this.$set(row, 'selection', arg[0]);
-  }
-  /**
+  }/**
    * 自定义selection表头
    */
   private renderSelectionHeader(h: CreateElement) {
@@ -1452,34 +1318,25 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     let jobType = '';
 
     switch (type) {
-      // 重启
-      case 'reboot':
+      case 'reboot': // 重启
         this.handleOperatetHost(data, batch, 'RESTART_AGENT');
         break;
-        // 移除
-      case 'remove':
+      case 'remove': // 移除
         this.handleOperatetHost(data, batch, 'REMOVE_AGENT');
         break;
-        // 重装
-      case 'reinstall':
-        // title = this.$t('重装Agent')
+      case 'reinstall': // 重装
         jobType = 'REINSTALL_AGENT';
         break;
-        // 重装
-      case 'reload':
+      case 'reload': // 重装
         jobType = 'RELOAD_AGENT';
         break;
-        // 卸载
-      case 'uninstall':
+      case 'uninstall': // 卸载
         jobType = 'UNINSTALL_AGENT';
-        // this.handleOperatetHost(data, batch, 'UNINSTALL_AGENT')
         break;
-        // 升级
-      case 'upgrade':
+      case 'upgrade': // 升级
         this.handleOperatetHost(data, batch, 'UPGRADE_AGENT');
         break;
-        // 日志详情
-      case 'log':
+      case 'log': // 日志详情
         this.handleGotoLog(data[0]);
         break;
     }
@@ -1531,16 +1388,13 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
     };
     let titleKey = '';
     switch (operateType) {
-      // 重启
-      case 'RESTART_AGENT':
+      case 'RESTART_AGENT': // 重启
         titleKey = '重启lower';
         break;
-        // 卸载
-      case 'UNINSTALL_AGENT':
+      case 'UNINSTALL_AGENT': // 卸载
         titleKey = '卸载lower';
         break;
-        // 升级
-      case 'UPGRADE_AGENT':
+      case 'UPGRADE_AGENT': // 升级
         titleKey = '升级lower';
         break;
       case 'REMOVE_AGENT':
@@ -1591,15 +1445,11 @@ export default class AgentList extends Mixins(pollMixin, TableHeaderMixins, auth
       this.loading = false;
     }
   }
-  /**
-   * 跨页全选
-   */
+  // 跨页全选
   private handleSelectionAll() {
     bus.$emit('checked-all-agent');
   }
-  /**
-   * 取消跨页全选
-   */
+  // 取消跨页全选
   private handleClearSelection() {
     bus.$emit('unchecked-all-agent');
   }

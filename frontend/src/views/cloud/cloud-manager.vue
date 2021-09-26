@@ -24,35 +24,16 @@
               </bk-button>
             </template>
           </auth-component>
-          <bk-dropdown-menu
+          <BtnDropdown
             class="ml10"
-            ref="copyIpDropdown"
-            trigger="click"
-            font-size="medium"
             :disabled="!checkableRowsAll"
-            @show="cpyDropdownShow = true"
-            @hide="cpyDropdownShow = false">
-            <bk-button class="dropdown-btn" v-test="'copyProxy'" slot="dropdown-trigger" :disabled="!checkableRowsAll">
-              <span class="icon-down-wrapper">
-                <span>{{ $t('复制') }}</span>
-                <i :class="['bk-icon icon-angle-down', { 'icon-flip': cpyDropdownShow }]"></i>
-              </span>
-            </bk-button>
-            <ul class="bk-dropdown-list" slot="dropdown-content">
-              <li>
-                <a :class="{ 'item-disabled': !hasSelectedRows }"
-                   v-test.common="'moreItem.selected'"
-                   @click.prevent.stop="handleCopyProxyIp('selected')">
-                  {{ $t('勾选云区域的ProxyIP') }}
-                </a>
-              </li>
-              <li>
-                <a v-test.common="'moreItem.all'" @click.prevent="handleCopyProxyIp('all')">
-                  {{ $t('所有云区域的ProxyIP') }}
-                </a>
-              </li>
-            </ul>
-          </bk-dropdown-menu>
+            :btn-text="$t('复制')"
+            :menu-list="[
+              { id: 'selected',name: $t('勾选云区域的ProxyIP'), disabled: !hasSelectedRows },
+              { id: 'all',name: $t('所有云区域的ProxyIP') },
+            ]"
+            @menu-click="handleCopyProxyIp">
+          </BtnDropdown>
         </div>
         <!--搜索云区域-->
         <bk-input
@@ -293,13 +274,14 @@
   </article>
 </template>
 <script lang="ts">
-import { Vue, Component, Prop, Ref } from 'vue-property-decorator';
+import { Vue, Component, Prop } from 'vue-property-decorator';
 import { MainStore, CloudStore } from '@/store/index';
-import { IBkColumn } from '@/types';
+import { IBkColumn, IDropdownItem } from '@/types';
 import { ICloud } from '@/types/cloud/cloud';
 import Tips from '@/components/common/tips.vue';
 import ColumnSetting from '@/components/common/column-setting.vue';
 import ColumnCheck from '@/views/agent/components/column-check.vue';
+import BtnDropdown from '@/components/common/btn-dropdown.vue';
 import { copyText, debounce } from '@/common/util';
 import { CreateElement } from 'vue';
 
@@ -315,13 +297,12 @@ interface ICloudRow extends ICloud {
   name: 'cloud-manager',
   components: {
     Tips,
+    BtnDropdown,
   },
 })
 
 export default class CloudManager extends Vue {
   @Prop({ type: Number, default: 0 }) private readonly id!: number; // 编辑ID
-
-  @Ref('copyIpDropdown') private readonly copyIpDropdown!: any;
 
   // 提示信息
   private tipsList = [
@@ -358,7 +339,6 @@ export default class CloudManager extends Vue {
   private deleteTips = this.$t('删除禁用提示');
   private isSelectAllPages = false;
   private excludedRows: ICloudRow[] = [];
-  private cpyDropdownShow = false;
 
   private get fontSize() {
     return MainStore.fontSize;
@@ -586,7 +566,7 @@ export default class CloudManager extends Vue {
         disabledCheckAll: !this.checkableRowsAll,
       },
       on: {
-        change: (value: boolean, type: string) => this.handleCheckAll(value, type),
+        change: this.handleCheckAll,
       },
     });
   }
@@ -625,7 +605,8 @@ export default class CloudManager extends Vue {
       });
     }
   }
-  public async handleCopyProxyIp(type: 'selected' | 'all') {
+  public async handleCopyProxyIp(item: IDropdownItem) {
+    const type = item.id;
     if (type === 'selected' && !this.hasSelectedRows) return;
     if (type === 'all' && !this.checkableRowsAll) return;
 
@@ -641,7 +622,6 @@ export default class CloudManager extends Vue {
     if (result) {
       this.$bkMessage({ theme: 'success', message: this.$t('IP复制成功', { num: data.length }) });
     }
-    this.copyIpDropdown.hide();
   }
   // 表格折叠
   public handleExpandChange(row: ICloudRow) {

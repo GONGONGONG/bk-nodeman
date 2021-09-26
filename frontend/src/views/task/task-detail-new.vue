@@ -17,28 +17,14 @@
       </div>
       <template v-else>
         <section class="detail-option">
-          <bk-dropdown-menu
-            trigger="click"
-            ref="dropdownCopy"
-            font-size="medium"
-            :disabled="copyLoading">
-            <bk-button
-              class="copy-dropdown-btn" v-test="'copy'" type="primary" slot="dropdown-trigger" :loading="copyLoading">
-              <span class="icon-down-wrapper">
-                <span>{{ $t('复制') }}</span>
-                <i :class="['bk-icon icon-angle-down', { 'icon-flip': isShowCopy }]"></i>
-              </span>
-            </bk-button>
-            <ul class="bk-dropdown-list" slot="dropdown-content">
-              <li v-for="copyType in copyTypeList" :key="copyType.key">
-                <a href="javascript:"
-                   v-test.common="`moreItem.${copyType.key || 'all'}`"
-                   @click.prevent.stop="handleCopy(copyType)">
-                  {{ copyType.name }}
-                </a>
-              </li>
-            </ul>
-          </bk-dropdown-menu>
+          <BtnDropdown
+            test-key="copy"
+            :loading="copyLoading"
+            :disabled="copyLoading"
+            :btn-text="$t('复制')"
+            :menu-list="copyTypeList"
+            @menu-click="handleCopy">
+          </BtnDropdown>
           <bk-button
             v-test="'stop'"
             class="ml10"
@@ -116,13 +102,14 @@
 </template>
 
 <script lang="tsx">
-import { Component, Prop, Mixins, Ref } from 'vue-property-decorator';
+import { Component, Prop, Mixins } from 'vue-property-decorator';
 import { AgentStore, TaskStore, MainStore } from '@/store/index';
 import TaskDetailTable from './task-detail-table.vue';
 import TaskDetailInfo from './task-detail-info.vue';
+import BtnDropdown from '@/components/common/btn-dropdown.vue';
 import HeaderFilterMixins from '@/components/common/header-filter-mixins';
 import PollMixin from '@/common/poll-mixin';
-import { ICondition, IPagination, ISearchChild, ISearchItem } from '@/types';
+import { ICondition, IDropdownItem, IPagination, ISearchChild, ISearchItem } from '@/types';
 import { ITaskHost, ITotalCount, ITask, ITaskParams } from '@/types/task/task';
 import { copyText, debounce, takesTimeFormat, toHump } from '@/common/util';
 import { Route } from 'vue-router';
@@ -136,19 +123,17 @@ Component.registerHooks([
   components: {
     TaskDetailInfo,
     TaskDetailTable,
+    BtnDropdown,
   },
 })
 export default class TaskDeatail extends Mixins(PollMixin, HeaderFilterMixins) {
   @Prop({ type: [String, Number], default: '', required: true }) private readonly taskId!: string | number;
   @Prop({ type: String, default: '' }) private readonly status!: string;
 
-  @Ref('dropdownCopy') private readonly dropdownCopy!: any;
-
   private loading = false;
   private tableLoading = false;
   private stopLoading = false;
   private retryLoading = false;
-  private isShowCopy = false;
   private pollStatus = ['running', 'pending']; // 需要轮询的状态
   private pagination: IPagination = {
     limit: 50,
@@ -197,10 +182,10 @@ export default class TaskDeatail extends Mixins(PollMixin, HeaderFilterMixins) {
   ];
   private copyLoading = false;
   private copyTypeList = [
-    { name: this.$t('所有IP'), key: '' },
-    { name: this.$t('被忽略IP'), key: 'ignored' },
-    { name: this.$t('失败IP'), key: 'failed' },
-    { name: this.$t('成功IP'), key: 'success' },
+    { name: this.$t('所有IP'), id: 'all' },
+    { name: this.$t('被忽略IP'), id: 'ignored' },
+    { name: this.$t('失败IP'), id: 'failed' },
+    { name: this.$t('成功IP'), id: 'success' },
   ];
   private getDetailListDebounce = function () {};
 
@@ -522,14 +507,13 @@ export default class TaskDeatail extends Mixins(PollMixin, HeaderFilterMixins) {
       row.loading = isLoading;
     });
   }
-  public async handleCopy(type: { name: string, key: string }) {
-    this.dropdownCopy.hide();
+  public async handleCopy(copyItem: IDropdownItem) {
     const params: ITaskParams = {
       pagesize: -1,
     };
-    if (type.key) {
+    if (copyItem.id !== 'all') {
       params.conditions = [
-        { key: 'status', value: [type.key.toUpperCase()] },
+        { key: 'status', value: [`${copyItem.id}`.toUpperCase()] },
       ];
     }
     this.copyLoading = true;
