@@ -11,6 +11,26 @@ module.exports = {
 };
 ```
 
+### eslint && vetur 检查路径问题
+
+在`根目录`下创建 `vetur.config.js` 文件，配置内容如下：
+```javascript
+module.exports = {
+  projects: [
+    './frontend',
+    {
+      root: './frontend',
+      package: './package.json',
+      tsconfig: './tsconfig.json',
+      snippetFolder: './.vscode/vetur/snippets',
+      globalComponents: [
+        './src/components/**/*.vue'
+      ]
+    }
+  ]
+}
+```
+
 #### 运行项目
 
 ```shell
