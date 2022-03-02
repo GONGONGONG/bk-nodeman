@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -16,11 +16,7 @@ from django.utils.translation import ugettext_lazy as _
 from apps.exceptions import ValidationError
 from apps.node_man import constants as const
 from apps.node_man.constants import DEFAULT_CLOUD_NAME, IamActionType
-from apps.node_man.exceptions import (
-    CloudNotExistError,
-    CloudNotPermissionError,
-    CloudUpdateHostError,
-)
+from apps.node_man.exceptions import CloudNotExistError, CloudUpdateHostError
 from apps.node_man.handlers.cmdb import CmdbHandler
 from apps.node_man.handlers.iam import IamHandler
 from apps.node_man.models import (
@@ -39,31 +35,6 @@ class CloudHandler(APIModel):
     """
     云区域API处理器
     """
-
-    def check_cloud_permission(self, bk_cloud_id: int, username: str, is_superuser: bool):
-        """
-        在步骤开始前检查权限
-        :param bk_cloud_id: 云区域id
-        :param username: 用户名
-        :param is_superuser: 是否为超管
-        :return cloud: 该云区域信息
-        """
-        try:
-            cloud = Cloud.objects.get(pk=bk_cloud_id)
-            if not settings.USE_IAM:
-                # 如果没有使用权限中心
-                if username in cloud.creator or is_superuser:
-                    return cloud
-            else:
-                # 如果使用权限中心
-                clouds = IamHandler().fetch_policy(get_request_username(), [IamActionType.cloud_view])[
-                    IamActionType.cloud_view
-                ]
-                if bk_cloud_id in clouds:
-                    return cloud
-            raise CloudNotPermissionError(_("您没有云区域 {cloud_name} 的权限").format(cloud_name=cloud.bk_cloud_name))
-        except Cloud.DoesNotExist:
-            raise CloudNotExistError(_("不存在ID为: {bk_cloud_id} 的云区域").format(bk_cloud_id=bk_cloud_id))
 
     def retrieve(self, bk_cloud_id: int):
         """
@@ -248,27 +219,21 @@ class CloudHandler(APIModel):
 
             return {"bk_cloud_id": cloud.bk_cloud_id}
 
-    def update(self, bk_cloud_id: int, params: dict):
+    @staticmethod
+    def update(bk_cloud_id: int, bk_cloud_name: str, isp: str, ap_id: int):
         """
         编辑云区域
-        :param bk_cloud_id: 云区域ID
-        :param params: 存有各个参数的值
         """
-
         cloud = Cloud.objects.get(pk=bk_cloud_id)
-
-        cloud.bk_cloud_name = params.get("bk_cloud_name")
-        cloud.isp = params.get("isp")
-        cloud.ap_id = params.get("ap_id")
-
-        created = list(Cloud.objects.filter(bk_cloud_name=params["bk_cloud_name"]).exclude(bk_cloud_id=bk_cloud_id))
-        if created != [] and created[0].bk_cloud_name == params["bk_cloud_name"]:
+        if Cloud.objects.filter(bk_cloud_name=bk_cloud_name).exclude(bk_cloud_id=bk_cloud_id).exists():
             raise ValidationError(_("云区域名称不可重复"))
 
-        # 向云端修改云区域名称
-        if params.get("bk_cloud_name"):
-            CmdbHandler.rename_cloud(bk_cloud_id, params["bk_cloud_name"])
+        # 向CMDB修改云区域名称
+        CmdbHandler.rename_cloud(bk_cloud_id, bk_cloud_name)
 
+        cloud.bk_cloud_name = bk_cloud_name
+        cloud.isp = isp
+        cloud.ap_id = ap_id
         cloud.save()
 
     def destroy(self, bk_cloud_id: int):

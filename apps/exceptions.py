@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -15,6 +15,7 @@ class ErrorCode(object):
     # 平台错误码
     PLAT_CODE = 3800000
     WEB_CODE = 0
+    IAM_CODE = 99
 
 
 class AppBaseException(Exception):
@@ -30,12 +31,13 @@ class AppBaseException(Exception):
         if context is None:
             context = {}
 
-        self.code = ErrorCode.PLAT_CODE + self.MODULE_CODE + self.ERROR_CODE
         self.errors = kwargs.get("errors")
 
         # 优先使用第三方系统的错误编码
         if kwargs.get("code"):
             self.code = kwargs["code"]
+        else:
+            self.code = ErrorCode.PLAT_CODE + self.MODULE_CODE + self.ERROR_CODE
 
         if self.MESSAGE_TPL:
             try:

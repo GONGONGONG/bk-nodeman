@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -209,7 +209,6 @@ class TestPlugin(TestCase):
                 "plugin_params_list": [{"name": "pluginplugin", "version": "latest"}],
             },
             "admin",
-            True,
         )
         # 跨页全选
         PluginHandler.operate(
@@ -219,7 +218,6 @@ class TestPlugin(TestCase):
                 "exclude_hosts": [],
             },
             "admin",
-            True,
         )
 
     # 测试package获取
@@ -301,6 +299,8 @@ class TestPlugin(TestCase):
             name=f"{plugin_name}.conf",
             version=version,
             format="yaml",
+            os="linux",
+            cpu_arch="x86_64",
             file_path="etc",
             content="",
             is_release_version=1,

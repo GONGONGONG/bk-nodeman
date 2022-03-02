@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -12,6 +12,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.generic import APIViewSet
+from apps.iam import ActionEnum, Permission
+from apps.iam.exceptions import PermissionDeniedError
+from apps.iam.handlers import resources
 from apps.node_man.handlers.cmdb import CmdbHandler
 from apps.node_man.serializers import cmdb
 
@@ -80,14 +83,20 @@ class CmdbViews(APIViewSet):
         data = self.validated_data
 
         # 返回用户具有权限的业务的业务拓扑列表
-        if not data.get("bk_biz_id"):
-            return Response(CmdbHandler().fetch_all_topo(request.user.is_superuser))
+        bk_biz_id = data.get("bk_biz_id")
+        if not bk_biz_id:
+            return Response(CmdbHandler().fetch_all_topo())
+        # 用户有权限获取的业务
+        # 格式 { bk_biz_id: bk_biz_name , ...}
+        iam_action = data.get("action", ActionEnum.AGENT_VIEW.id)
+        user_biz = CmdbHandler().biz_id_name({"action": data.get("action", ActionEnum.AGENT_VIEW.id)})
 
-        params = [data["bk_biz_id"], request.user.is_superuser, False]
-        if data.get("action"):
-            params.append(data["action"])
-        # 处理
-        return Response(CmdbHandler().fetch_topo(*params))
+        if not user_biz.get(bk_biz_id):
+            iam_resources = [resources.Business.create_instance(bk_biz_id)]
+            apply_data, apply_url = Permission().get_apply_data([iam_action], iam_resources)
+            raise PermissionDeniedError(action_name=iam_action, apply_url=apply_url, permission=apply_data)
+
+        return Response(CmdbHandler().fetch_topo(bk_biz_id))
 
     @action(detail=False, methods=["GET"], serializer_class=cmdb.CmdbSearchTopoSerializer)
     def search_topo(self, request):
@@ -115,17 +124,6 @@ class CmdbViews(APIViewSet):
         }
         """
         return Response(CmdbHandler().search_topo_nodes(self.validated_data))
-
-    @action(detail=False, methods=["GET"])
-    def test_batch_add_host(self, request):
-        """测试用，批量添加主机"""
-        # from apps.node_man.tests.test_cmdb import batch_add_host_to_biz
-        # batch_add_host_to_biz()
-        # from apps.node_man.periodic_tasks import sync_agent_status_task
-        # sync_agent_status_task()
-        # from apps.node_man.periodic_tasks import sync_cmdb_host
-        # sync_cmdb_host(12)
-        return Response()
 
     @action(detail=False, methods=["GET"], serializer_class=cmdb.CmdbSearchTopoSerializer)
     def search_ip(self, request):
@@ -167,3 +165,29 @@ class CmdbViews(APIViewSet):
         }
         """
         return Response(CmdbHandler().search_ip(self.validated_data))
+
+    @action(detail=False, methods=["GET"], serializer_class=cmdb.FetchBizServiceTemplateSerializer)
+    def service_template(self, request, *args, **kwargs):
+        """
+        @api {GET} /cmdb/service_template/  查询服务模板列表
+        @apiName service_template
+        @apiGroup cmdb
+        @apiParam {Int} bk_biz_id 业务ID
+        @apiParamExample {json} 请求参数:
+        {
+            "bk_biz_id": 2
+        }
+        @apiSuccessExample {json} 成功返回:
+        [
+            {
+                id: 68,
+                name: "db模板",
+            },
+            {
+                bk_biz_id: 2,
+                id: 65,
+                name: "服务模板名称",
+            },
+        ]
+        """
+        return Response(CmdbHandler().get_biz_service_template(self.validated_data["bk_biz_id"]))

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -13,8 +13,10 @@ import re
 import socket
 import time
 import traceback
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import paramiko
+import wrapt
 from django.utils.translation import ugettext_lazy as _
 from six import StringIO
 
@@ -373,12 +375,33 @@ class Inspector(object):
 inspector = Inspector()
 
 
+@wrapt.decorator
+def ssh_man_exception_handler(wrapped: Callable, instance: Optional[object], args: Tuple[Any], kwargs: Dict[str, Any]):
+    """
+    捕获 SshMan 类方法的异常，尝试释放连接，减少占用IO资源
+    :param wrapped: 被装饰的函数或类方法
+    :param instance:
+        - 如果被装饰者为普通类方法，该值为类实例
+        - 如果被装饰者为 classmethod / 类方法，该值为类
+        - 如果被装饰者为类/函数/静态方法，该值为 None
+    :param args: 位置参数
+    :param kwargs: 关键字参数
+    :return:
+    """
+    try:
+        return wrapped(*args, **kwargs)
+    except Exception:
+        if instance:
+            instance.safe_close(getattr(instance, "ssh"))
+        raise
+
+
 class SshMan(object):
     """
     SshMan，负责SSH终端命令交互
     """
 
-    def __init__(self, host: Host, log):
+    def __init__(self, host: Host, log, identity_data: Optional[IdentityData] = None):
         self.set_proxy_prompt = r'export PS1="[\u@\h_BKproxy \W]\$"'
 
         # 初始化ssh会话
@@ -386,7 +409,7 @@ class SshMan(object):
             ip = host.login_ip or host.outer_ip
         else:
             ip = host.login_ip or host.inner_ip
-        identity_data = IdentityData.objects.get(bk_host_id=host.bk_host_id)
+        identity_data = identity_data or host.identity
         if (identity_data.auth_type == AuthType.PASSWORD and not identity_data.password) or (
             identity_data.auth_type == AuthType.KEY and not identity_data.key
         ):
@@ -431,6 +454,7 @@ class SshMan(object):
         timeout = RECV_TIMEOUT if timeout < 0 else timeout
         self.chan.settimeout(timeout=timeout)
 
+    @ssh_man_exception_handler
     def send_cmd(
         self,
         cmd,
@@ -489,7 +513,7 @@ class SshMan(object):
                 self.log.info(output)
 
             except socket.timeout:
-                raise Exception(f"recv socket timeout after %s seconds: {RECV_TIMEOUT}")
+                raise socket.timeout(f"recv socket timeout after {RECV_TIMEOUT} seconds")
             except Exception as e:
                 raise Exception(f"recv exception: {e}")
 

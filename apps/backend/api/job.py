@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -20,6 +20,7 @@ from django.conf import settings
 
 from apps.core.files.storage import get_storage
 
+from ...node_man import constants
 from .constants import (
     ACCOUNT_MAP,
     POLLING_INTERVAL,
@@ -243,6 +244,8 @@ class JobClient(object):
         """
         params = {
             "bk_biz_id": settings.BLUEKING_BIZ_ID,
+            "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+            "bk_scope_id": settings.BLUEKING_BIZ_ID,
             "task_name": task_name,
             "script_param": process_parms(script_param),
             "script_content": process_parms(script_content),

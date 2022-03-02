@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -15,7 +15,7 @@ import os
 import platform
 import re
 from enum import Enum
-from typing import List
+from typing import Dict, List
 
 from django.conf import settings
 from django.utils.translation import ugettext_lazy as _
@@ -27,6 +27,7 @@ from apps.utils.basic import (
     reverse_dict,
     tuple_choices,
 )
+from apps.utils.enum import EnhanceEnum
 
 # 此值为历史遗留，后续蓝鲸不使用此字段后可废弃
 DEFAULT_SUPPLIER_ID = 0
@@ -43,12 +44,8 @@ class TimeUnit:
     DAY = HOUR * 24
 
 
-TASK_TIMEOUT = 0  # 脚本超时控制在180s=3min
-TASK_MAX_TIMEOUT = 3600  # 脚本超时控制在180s=3min
-JOB_MAX_RETRY = 60  # 默认轮询作业最大次数 100次=3min
-JOB_SLEEP_SECOND = 3  # 默认轮询作业周期 3s
-MAX_POLL_TIMES = JOB_MAX_RETRY
-MAX_UNINSTALL_RETRY = JOB_MAX_RETRY
+# JOB 任务超时时间
+JOB_TIMEOUT = 30 * TimeUnit.MINUTE
 
 
 ########################################################################################################
@@ -108,9 +105,9 @@ class PluginChildDir(Enum):
         return [cls.EXTERNAL.value, cls.OFFICIAL.value]
 
 
-PACKAGE_PATH_RE = re.compile(
-    "(?P<is_external>external_)?plugins_(?P<os>(linux|windows|aix))_(?P<cpu_arch>(x86_64|x86|powerpc|aarch64))"
-)
+# 插件默认
+PLUGIN_DEFAULT_MEM_LIMIT = 10
+PLUGIN_DEFAULT_CPU_LIMIT = 10
 
 ########################################################################################################
 # CHOICES
@@ -128,13 +125,13 @@ BK_OS_TYPE = {"LINUX": "1", "WINDOWS": "2", "AIX": "3", "SOLARIS": "5"}
 # 操作系统->系统账户映射表
 ACCOUNT_MAP = {
     OsType.WINDOWS: settings.BACKEND_WINDOWS_ACCOUNT,
-    OsType.LINUX: "root",
-    OsType.AIX: "root",
-    OsType.SOLARIS: "root",
+    OsType.LINUX: settings.BACKEND_UNIX_ACCOUNT,
+    OsType.AIX: settings.BACKEND_UNIX_ACCOUNT,
+    OsType.SOLARIS: settings.BACKEND_UNIX_ACCOUNT,
     OsType.WINDOWS.lower(): settings.BACKEND_WINDOWS_ACCOUNT,
-    OsType.LINUX.lower: "root",
-    OsType.AIX.lower: "root",
-    OsType.SOLARIS.lower: "root",
+    OsType.LINUX.lower(): settings.BACKEND_UNIX_ACCOUNT,
+    OsType.AIX.lower(): settings.BACKEND_UNIX_ACCOUNT,
+    OsType.SOLARIS.lower(): settings.BACKEND_UNIX_ACCOUNT,
 }
 
 OS_TYPE = {"1": "LINUX", "2": "WINDOWS", "3": "AIX", "5": "SOLARIS"}
@@ -389,14 +386,28 @@ class JobStatusType(object):
 
 NODE_MAN_LOG_LEVEL = ("INFO", "DEBUG", "PRIMARY", "WARNING", "ERROR")
 
+
+class BkAgentStatus(EnhanceEnum):
+    """对应 GSE get_agent_status 中 bk_agent_alive 的取值"""
+
+    NOT_ALIVE = 0
+    ALIVE = 1
+    TERMINATED = 2
+    NOT_INSTALLED = 3
+
+    @classmethod
+    def _get_member__alias_map(cls) -> Dict[Enum, str]:
+        return {cls.NOT_ALIVE: _("未知"), cls.ALIVE: _("正常"), cls.TERMINATED: _("异常"), cls.NOT_INSTALLED: _("未安装")}
+
+
 PROC_STATE_TUPLE = ("RUNNING", "UNKNOWN", "TERMINATED", "NOT_INSTALLED", "UNREGISTER", "REMOVED", "MANUAL_STOP")
 PROC_STATE_CHOICES = tuple_choices(PROC_STATE_TUPLE)
 ProcStateType = choices_to_namedtuple(PROC_STATE_CHOICES)
 PROC_STATUS_DICT = {
-    0: ProcStateType.UNKNOWN,
-    1: ProcStateType.RUNNING,
-    2: ProcStateType.TERMINATED,
-    3: ProcStateType.NOT_INSTALLED,
+    BkAgentStatus.NOT_ALIVE.value: ProcStateType.UNKNOWN,
+    BkAgentStatus.ALIVE.value: ProcStateType.RUNNING,
+    BkAgentStatus.TERMINATED.value: ProcStateType.TERMINATED,
+    BkAgentStatus.NOT_INSTALLED.value: ProcStateType.NOT_INSTALLED,
 }
 PROC_STATUS_CHN = {
     ProcStateType.UNKNOWN: _("未知"),
@@ -469,6 +480,11 @@ DEFAULT_OS_CPU_MAP = {
     OsType.AIX: CpuType.powerpc,
     OsType.SOLARIS: CpuType.sparc,
 }
+
+PACKAGE_PATH_RE = re.compile(
+    f"(?P<is_external>external_)?plugins_(?P<os>({'|'.join(map(str, PLUGIN_OS_TUPLE))}))"
+    f"_(?P<cpu_arch>({'|'.join(map(str, CPU_TUPLE))})?$)"
+)
 
 # TODO: 部署方式，后续确认
 DEPLOY_TYPE_TUPLE = ("package", "config", "agent")
@@ -628,6 +644,19 @@ class SetupScriptFileName(Enum):
     SETUP_AGENT_SOLARIS_SH = "setup_solaris_agent.sh"
 
 
+SCRIPT_FILE_NAME_MAP = {
+    OsType.LINUX: SetupScriptFileName.SETUP_AGENT_SH.value,
+    OsType.WINDOWS: SetupScriptFileName.SETUP_AGENT_BAT.value,
+    OsType.AIX: SetupScriptFileName.SETUP_AGENT_KSH.value,
+    OsType.SOLARIS: SetupScriptFileName.SETUP_AGENT_SOLARIS_SH.value,
+}
+
+
+########################################################################################################
+# JOB
+########################################################################################################
+
+
 class BkJobStatus(object):
     """
     作业步骤状态码:
@@ -642,25 +671,18 @@ class BkJobStatus(object):
     FAILED = 4
 
 
-class BkAgentStatus(object):
-    """
-    Gse agent状态码：
-    0为不在线，1为在线
-    """
-
-    ALIVE = 1
-    NOT_ALIVE = 0
-
-
 class BkJobErrorCode(object):
     NOT_RUNNING = -1
+    AGENT_ABNORMAL = 117
+    RUNNING = 7
 
     BK_JOB_ERROR_CODE_MAP = {
         NOT_RUNNING: _("该IP未执行作业，请联系管理员排查问题"),
         1: _("Agent异常"),
         3: _("上次已成功"),
+        4: _("执行失败"),
         5: _("等待执行"),
-        7: _("正在执行"),
+        RUNNING: _("正在执行"),
         9: _("执行成功"),
         11: _("任务失败"),
         12: _("任务下发失败"),
@@ -670,7 +692,7 @@ class BkJobErrorCode(object):
         102: _("脚本执行超时"),
         103: _("脚本执行被终止"),
         104: _("脚本返回码非零"),
-        117: _("Agent异常"),
+        AGENT_ABNORMAL: _("Agent异常"),
         202: _("文件传输失败"),
         203: _("源文件不存在"),
         310: _("Agent异常"),
@@ -685,18 +707,63 @@ class BkJobErrorCode(object):
 class BkJobIpStatus(object):
     NOT_RUNNING = -1
     SUCCEEDED = 9
+    AGENT_ABNORMAL = 1
+    RUNNING = 7
 
     BK_JOB_IP_STATUS_MAP = {
         NOT_RUNNING: _("该IP未执行作业，请联系管理员排查问题"),
-        1: _("Agent异常"),
+        AGENT_ABNORMAL: _("Agent异常"),
+        4: _("执行失败"),
         5: _("等待执行"),
-        7: _("正在执行"),
+        RUNNING: _("正在执行"),
         SUCCEEDED: _("执行成功"),
         11: _("执行失败"),
         12: _("任务下发失败"),
         403: _("任务强制终止成功"),
         404: _("任务强制终止失败"),
     }
+
+
+class BkJobParamSensitiveType(EnhanceEnum):
+    """作业平台参数是否敏感"""
+
+    YES = 1
+    NO = 0
+
+    @classmethod
+    def _get_member__alias_map(cls) -> Dict[Enum, str]:
+        return {cls.YES: _("是，参数将会在执行详情页面上隐藏"), cls.NO: _("否，默认值")}
+
+
+class BkJobScopeType(EnhanceEnum):
+    """作业平台执行范围类型"""
+
+    BIZ = 1
+    BIZ_SET = 2
+
+    @classmethod
+    def _get_member__alias_map(cls) -> Dict[Enum, str]:
+        return {cls.BIZ: _("业务"), cls.NO: _("业务集")}
+
+
+class ScriptLanguageType(EnhanceEnum):
+    """脚本语言类型"""
+
+    SHELL = 1
+    BAT = 2
+    PERL = 3
+    PYTHON = 4
+    POWER_SHELL = 5
+
+    @classmethod
+    def _get_member__alias_map(cls) -> Dict[Enum, str]:
+        return {
+            cls.SHELL: _("shell"),
+            cls.BAT: _("bat"),
+            cls.PERL: _("perl"),
+            cls.PYTHON: _("python"),
+            cls.POWER_SHELL: _("power_shell"),
+        }
 
 
 class GseOpType(object):
@@ -729,6 +796,9 @@ class CmdbObjectId:
     MODULE = "module"
     HOST = "host"
     CUSTOM = "custom"
+
+    SERVICE_TEMPLATE = "service_template"
+    SET_TEMPLATE = "set_template"
 
     OBJ_ID_ALIAS_MAP = {BIZ: _("业务"), SET: _("集群"), MODULE: _("模块"), HOST: _("主机"), CUSTOM: _("自定义")}
 
@@ -769,11 +839,3 @@ FILES_TO_PUSH_TO_PROXY = [
         "name": _("下发安装工具"),
     },
 ]
-
-
-SCRIPT_FILE_NAME_MAP = {
-    OsType.LINUX: SetupScriptFileName.SETUP_AGENT_SH.value,
-    OsType.WINDOWS: SetupScriptFileName.SETUP_AGENT_BAT.value,
-    OsType.AIX: SetupScriptFileName.SETUP_AGENT_KSH.value,
-    OsType.SOLARIS: SetupScriptFileName.SETUP_AGENT_SOLARIS_SH.value,
-}

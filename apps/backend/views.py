@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -10,6 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 import logging
 import time
+from typing import Dict, List, Optional, Tuple
 
 import ujson as json
 from blueapps.account.decorators import login_exempt
@@ -17,9 +18,15 @@ from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from apps.backend.constants import (
+    REDIS_AGENT_CONF_KEY_TPL,
+    REDIS_INSTALL_CALLBACK_KEY_TPL,
+)
 from apps.backend.utils.data_renderer import nested_render_data
 from apps.backend.utils.encrypted import GseEncrypted
+from apps.backend.utils.redis import REDIS_INST
 from apps.node_man import constants, models
+from apps.node_man.handlers import base_info
 from apps.node_man.models import Host, JobSubscriptionInstanceMap, aes_cipher
 from pipeline.service import task_service
 
@@ -429,6 +436,23 @@ PLUGIN_INFO_TEMPLATE = """
 }
 """
 
+# 记录日志并设置过期时间
+# 使用 lua 脚本合并 Redis 请求，保证操作的原子性，同时减少网络 IO
+# unpack(ARGV, 2) 对 table（lua 中的 list / dict）解包，2 为切片的起始位置（lua 索引从 1 开始），实现日志添加到列表
+# ARGV[1] 过期时间（单位 seconds）
+LPUSH_AND_EXPIRE_SCRIPT = """
+local length
+length = redis.call("lpush", KEYS[1], unpack(ARGV, 2))
+redis.call("expire", KEYS[1], ARGV[1])
+return length
+"""
+
+try:
+    LPUSH_AND_EXPIRE_FUNC = REDIS_INST.register_script(script=LPUSH_AND_EXPIRE_SCRIPT)
+except Exception as e:
+    LPUSH_AND_EXPIRE_FUNC = None
+    logger.exception(e)
+
 
 def is_designated_upstream_servers(host: models.Host):
     """判断是否指定上游节点"""
@@ -449,19 +473,38 @@ def is_designated_upstream_servers(host: models.Host):
     return False
 
 
-def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
-    host = Host.objects.get(bk_cloud_id=bk_cloud_id, inner_ip=inner_ip)
-    agent_config = host.agent_config
+def generate_gse_config(
+    host: models.Host,
+    filename: str,
+    node_type: str,
+    ap: Optional[models.AccessPoint] = None,
+    proxies: Optional[List[models.Host]] = None,
+    install_channel: Tuple[Optional[models.Host], Dict[str, List]] = None,
+):
+    """
+    生成 GSE 相关配置
+    :param host: 主机对象
+    :param filename: 文件名
+    :param node_type: 节点类型（lower）
+    :param ap: 接入点对象
+    :param proxies: Proxy 主机列表
+    :param install_channel: 安装通道
+    :return:
+    """
+    # 批量执行时，通过指定 ap 减少DB查询次数
+    ap = ap or host.ap
+    agent_config = ap.get_agent_config(host.os_type)
     setup_path = agent_config["setup_path"]
     log_path = agent_config["log_path"]
     # 如果没有自定义则使用接入点默认配置
     data_path = host.extra_data.get("data_path") or agent_config["data_path"]
 
-    taskserver_outer_ips = [server["outer_ip"] for server in host.ap.taskserver]
-    btfileserver_outer_ips = [server["outer_ip"] for server in host.ap.btfileserver]
-    dataserver_outer_ips = [server["outer_ip"] for server in host.ap.dataserver]
+    taskserver_outer_ips = [server["outer_ip"] for server in ap.taskserver]
+    btfileserver_outer_ips = [server["outer_ip"] for server in ap.btfileserver]
+    dataserver_outer_ips = [server["outer_ip"] for server in ap.dataserver]
 
-    jump_server, upstream_nodes = host.install_channel()
+    install_channel = install_channel or host.install_channel
+    __, upstream_nodes = install_channel
     taskserver_inner_ips = [server for server in upstream_nodes["taskserver"]]
     btfileserver_inner_ips = [server for server in upstream_nodes["btfileserver"]]
     dataserver_inner_ips = [server for server in upstream_nodes["dataserver"]]
@@ -479,7 +522,7 @@ def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
 
     template = {}
     context = {}
-    port_config = host.ap.port_config
+    port_config = ap.port_config
     if node_type in ["agent", "pagent"]:
         template = {"agent.conf": AGENT_TEMPLATE, "plugin_info.json": PLUGIN_INFO_TEMPLATE}[filename]
         # 路径使用json.dumps 主要是为了解决Windows路径，如 C:\gse —> C:\\gse
@@ -517,20 +560,21 @@ def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
             pluginipc = f'"{pluginipc}"'
 
         if settings.GSE_USE_ENCRYPTION:
-            zk_auth = GseEncrypted.encrypted(f"{host.ap.zk_account}:{host.ap.zk_password}")
+            zk_auth = GseEncrypted.encrypted(f"{ap.zk_account}:{ap.zk_password}")
         else:
-            zk_auth = f"{host.ap.zk_account}:{host.ap.zk_password}"
+            zk_auth = f"{ap.zk_account}:{ap.zk_password}"
 
+        proxies = proxies if proxies is not None else host.proxies
         context = {
             "setup_path": setup_path,
             "log_path": log_path,
-            "agentip": inner_ip,
+            "agentip": host.inner_ip,
             "bk_supplier_id": 0,
-            "bk_cloud_id": bk_cloud_id,
+            "bk_cloud_id": host.bk_cloud_id,
             "default_cloud_id": constants.DEFAULT_CLOUD,
-            "identityip": inner_ip,
-            "region_id": host.ap.region_id,
-            "city_id": host.ap.city_id,
+            "identityip": host.inner_ip,
+            "region_id": ap.region_id,
+            "city_id": ap.city_id,
             "password_keyfile": False
             if settings.BKAPP_RUN_ENV == constants.BkappRunEnvType.CE.value
             else password_keyfile,
@@ -543,9 +587,9 @@ def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
             "plugincfg": plugincfg,
             "pluginbin": pluginbin,
             "pluginipc": pluginipc,
-            "zkhost": ",".join(f'{zk_host["zk_ip"]}:{zk_host["zk_port"]}' for zk_host in host.ap.zk_hosts),
-            "zkauth": zk_auth if host.ap.zk_account and host.ap.zk_password else "",
-            "proxy_servers": [proxy.inner_ip for proxy in host.proxies],
+            "zkhost": ",".join(f'{zk_host["zk_ip"]}:{zk_host["zk_port"]}' for zk_host in ap.zk_hosts),
+            "zkauth": zk_auth if ap.zk_account and ap.zk_password else "",
+            "proxy_servers": [proxy.inner_ip for proxy in proxies],
             "peer_exchange_switch_for_agent": host.extra_data.get("peer_exchange_switch_for_agent", 1),
             "bt_speed_limit": host.extra_data.get("bt_speed_limit"),
             "io_port": port_config.get("io_port"),
@@ -584,15 +628,15 @@ def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
             "log_path": log_path,
             "data_path": data_path,
             "bk_supplier_id": 0,
-            "bk_cloud_id": bk_cloud_id,
+            "bk_cloud_id": host.bk_cloud_id,
             "taskserver_outer_ips": taskserver_outer_ips,
             "btfileserver_outer_ips": btfileserver_outer_ips,
             "dataserver_outer_ips": dataserver_outer_ips,
-            "inner_ip": inner_ip,
+            "inner_ip": host.inner_ip,
             "outer_ip": host.outer_ip,
-            "proxy_servers": [inner_ip],
-            "region_id": host.ap.region_id,
-            "city_id": host.ap.city_id,
+            "proxy_servers": [host.inner_ip],
+            "region_id": ap.region_id,
+            "city_id": ap.city_id,
             "dataipc": dataipc,
             "peer_exchange_switch_for_agent": host.extra_data.get("peer_exchange_switch_for_agent", 1),
             "bt_speed_limit": host.extra_data.get("bt_speed_limit"),
@@ -617,11 +661,19 @@ def generate_gse_config(bk_cloud_id, filename, node_type, inner_ip):
     return nested_render_data(template, context)
 
 
-def generate_bscp_config(bk_cloud_id, inner_ip):
-    host = Host.objects.get(bk_cloud_id=bk_cloud_id, inner_ip=inner_ip)
-    bscp_config = host.ap.bscp_config
+def generate_bscp_config(host: models.Host, ap: Optional[models.AccessPoint] = None):
+    """
+    生成 BSCP 配置
+    :param host: 主机对象
+    :param ap: 接入点对象
+    :return:
+    """
+    if ap is None:
+        bscp_config = host.ap.bscp_config
+    else:
+        bscp_config = ap.bscp_config
     context = {
-        "ENDPOINT_IP": inner_ip,
+        "ENDPOINT_IP": host.inner_ip,
         "ENDPOINT_PORT": bscp_config.get("ENDPOINT_PORT", 59516),
         "FILE_RELOAD_MODE": bscp_config.get("FILE_RELOAD_MODE", False),
         "FILE_RELOAD_NAME": bscp_config.get("FILE_RELOAD_NAME", "BSCP.reload"),
@@ -668,11 +720,16 @@ def get_gse_config(request):
         )
         raise PermissionError("what are you doing?")
 
+    config = REDIS_INST.get(REDIS_AGENT_CONF_KEY_TPL.format(file_name=filename, sub_inst_id=decrypted_token["inst_id"]))
+    if config:
+        return HttpResponse(config.decode())
+
     try:
+        host = Host.objects.get(bk_cloud_id=bk_cloud_id, inner_ip=inner_ip)
         if filename in ["bscp.yaml"]:
-            config = generate_bscp_config(bk_cloud_id, inner_ip)
+            config = generate_bscp_config(host=host)
         else:
-            config = generate_gse_config(bk_cloud_id, filename, node_type, inner_ip)
+            config = generate_gse_config(host=host, filename=filename, node_type=node_type)
     except Exception:
         return HttpResponse(config, status=500)
 
@@ -712,7 +769,11 @@ def report_log(request):
         logger.error(f"token[{token}] 非法, task_id为:{data['task_id']}, token解析为: {decrypted_token}")
         raise PermissionError("what are you doing?")
 
-    task_service.callback(data["task_id"], data["logs"])
+    # 把日志写入redis中，由install service中的schedule方法统一读取，避免频繁callback
+    name = REDIS_INSTALL_CALLBACK_KEY_TPL.format(sub_inst_id=decrypted_token["inst_id"])
+    json_dumps_logs = [json.dumps(log) for log in data["logs"]]
+    # 日志会被 Service 消费并持久化，在 Redis 保留一段时间便于排查「主机 -api-> Redis -log-> DB」 上的问题
+    LPUSH_AND_EXPIRE_FUNC(keys=[name], args=[constants.TimeUnit.DAY] + json_dumps_logs)
     return JsonResponse({})
 
 
@@ -753,12 +814,13 @@ def _decrypt_token(token: str) -> dict:
         logger.error(f"{token}解析失败")
         raise err
 
-    inner_ip, bk_cloud_id, task_id, timestamp = token_decrypt.split("|")
+    inner_ip, bk_cloud_id, task_id, timestamp, inst_id = token_decrypt.split("|")
     return_value = {
         "inner_ip": inner_ip,
         "bk_cloud_id": int(bk_cloud_id),
         "task_id": task_id,
         "timestamp": timestamp,
+        "inst_id": inst_id,
     }
     # timestamp 超过1小时，认为是非法请求
     if time.time() - float(timestamp) > 3600:
@@ -766,3 +828,8 @@ def _decrypt_token(token: str) -> dict:
         raise PermissionError("what are you doing?")
 
     return return_value
+
+
+@login_exempt
+def version(request):
+    return JsonResponse(base_info.BaseInfoHandler.version())

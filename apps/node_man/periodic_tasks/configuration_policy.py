@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -31,11 +31,6 @@ def configuration_policy():
     logger.info(f"{task_id} | Start configuring policy.")
 
     client = VpcClient()
-    is_ok, message = client.init()
-    if not is_ok:
-        logger.error(f"configuration_policy error: {message}")
-        raise ConfigurationPolicyError()
-
     # 兼容nat网络，外网IP和登录IP都添加到策略中
     hosts = Host.objects.filter(node_type=NodeType.PROXY).values("login_ip", "outer_ip")
     need_add_ip_list = []
@@ -50,7 +45,7 @@ def configuration_policy():
         need_add_ip_list = list(set(need_add_ip_list) - set(using_ip_list))
         if need_add_ip_list:
             new_ip_list = need_add_ip_list + using_ip_list
-            is_ok, message = client.add_ip_to_template(template, new_ip_list, need_query=False)
+            is_ok, message = client.add_ip_to_template(template, new_ip_list)
             if not is_ok:
                 logger.error(f"configuration_policy error: {message}")
                 raise ConfigurationPolicyError()

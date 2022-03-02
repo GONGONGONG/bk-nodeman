@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -33,10 +33,10 @@ from apps.node_man.views import (
     install_channel,
     job,
     meta,
+    password,
     permission,
     plugin,
     policy,
-    tjj,
 )
 from apps.node_man.views.healthz import HealthzViewSet
 from apps.node_man.views.host_v2 import HostV2ViewSet
@@ -57,7 +57,7 @@ router.register(r"permission", permission.PermissionViewSet, basename="permissio
 router.register(r"cmdb", cmdb.CmdbViews, basename="cmdb")
 router.register(r"debug", debug.DebugViews, basename="debug")
 router.register(r"meta", meta.MetaViews, basename="meta")
-router.register(r"tjj", tjj.TjjViews, basename="tjj")
+router.register(r"tjj", password.PasswordViews, basename="tjj")
 router.register(r"policy", policy.PolicyViewSet, basename="policy")
 router.register(r"plugin/(?P<category>\w+)/process", GsePluginViewSet)
 router.register(r"plugin", plugin.PluginViewSet, basename="plugin")
@@ -79,7 +79,8 @@ package_dispatcher.register("package", PackageResourceProvider())
 
 urlpatterns = [
     url(r"^$", views.index),
-    url(r"ping", views.ping),
+    url(r"^ping/", views.ping),
+    url(r"^version/", views.version),
     url(r"api/", include(router.urls)),
     url(r"api/iam/v1/biz", biz_dispatcher.as_view([login_exempt])),
     url(r"api/iam/v1/cloud", cloud_dispatcher.as_view([login_exempt])),

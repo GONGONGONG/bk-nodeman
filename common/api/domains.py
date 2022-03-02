@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -36,4 +36,5 @@ CC_APIGATEWAY_ROOT_V2 = gen_api_root("BKAPP_BK_CC_APIGATEWAY", "cc")
 GSE_APIGATEWAY_ROOT_V2 = gen_api_root("BKAPP_BK_GSE_APIGATEWAY", "gse")
 ESB_APIGATEWAY_ROOT_V2 = gen_api_root("BKAPP_BK_ESB_APIGATEWAY", "esb")
 JOB_APIGATEWAY_ROOT_V3 = gen_api_root("BKAPP_BK_JOB_APIGATEWAY", "jobv3")
+SOPS_APIGATEWAY_ROOT = gen_api_root("BKAPP_BK_SOPS_APIGATEWAY", "sops")
 BK_NODE_APIGATEWAY_ROOT = gen_api_root("BKAPP_BK_NODE_APIGATEWAY", "nodeman")

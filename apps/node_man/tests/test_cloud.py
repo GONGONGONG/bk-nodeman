@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -14,11 +14,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from apps.exceptions import ValidationError
-from apps.node_man.exceptions import (
-    CloudNotExistError,
-    CloudNotPermissionError,
-    CloudUpdateHostError,
-)
+from apps.node_man.exceptions import CloudNotExistError, CloudUpdateHostError
 from apps.node_man.handlers.cloud import CloudHandler
 from apps.node_man.models import IdentityData
 from apps.node_man.tests.utils import DIGITS, MockClient, create_cloud_area, create_host
@@ -46,21 +42,6 @@ class TestCloud(TestCase):
         # 测试查询，不包括云区域
         clouds = CloudHandler().list({"with_default_area": False})
         self.assertEqual(len(clouds), len(bk_cloud_ids))
-
-    @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
-    def test_check_cloud_permission(self):
-        # 创建云区域10个
-        number = 10
-        bk_cloud_ids = create_cloud_area(number, creator="test")
-
-        # 测试权限接口，正常情况
-        CloudHandler().check_cloud_permission(bk_cloud_ids[0], "test", False)
-
-        # 没有权限和不存在的情况
-        self.assertRaises(
-            CloudNotPermissionError, CloudHandler().check_cloud_permission, bk_cloud_ids[0], "testtt", False
-        )
-        self.assertRaises(CloudNotExistError, CloudHandler().check_cloud_permission, 123123, "admin", True)
 
     @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
     def test_cloud_retrieve(self):
@@ -126,7 +107,7 @@ class TestCloud(TestCase):
         bk_cloud_id = cloud["bk_cloud_id"]
         kwarg["ap_id"] = 1
         kwarg["bk_cloud_name"] = "cktest"
-        CloudHandler().update(bk_cloud_id, kwarg)
+        CloudHandler().update(bk_cloud_id, kwarg["bk_cloud_name"], kwarg["isp"], kwarg["ap_id"])
 
         # 测试重复名字
         CloudHandler().create(
@@ -141,7 +122,9 @@ class TestCloud(TestCase):
         )
 
         kwarg["bk_cloud_name"] = "ck_test"
-        self.assertRaises(ValidationError, CloudHandler().update, bk_cloud_id, kwarg)
+        self.assertRaises(
+            ValidationError, CloudHandler().update, bk_cloud_id, kwarg["bk_cloud_name"], kwarg["isp"], kwarg["ap_id"]
+        )
 
     @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
     def test_cloud_destroy(self):

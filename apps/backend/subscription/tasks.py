@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -17,13 +17,13 @@ import traceback
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from functools import wraps
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from django.utils.translation import ugettext as _
 
 from apps.backend.celery import app
 from apps.backend.components.collections.base import ActivityType
-from apps.backend.subscription import agent_tasks, tools
+from apps.backend.subscription import tools
 from apps.backend.subscription.constants import TASK_HOST_LIMIT
 from apps.backend.subscription.errors import SubscriptionInstanceEmpty
 from apps.backend.subscription.steps import StepFactory
@@ -60,7 +60,7 @@ def build_instances_task(
     :param subscription_instances: 订阅实例列表
     :param step_actions: {"basereport": "MAIN_INSTALL_PLUGIN"}
     :param subscription: 订阅对象
-    :param global_pipeline_data: 全局pipeline变量
+    :param global_pipeline_data: 全局pipeline公共变量
     :return:
     """
     # 首先获取当前订阅对应步骤的工厂类
@@ -83,8 +83,8 @@ def build_instances_task(
         action_name = step_actions[step_manager.step_id]
         action_manager = step_manager.create_action(action_name, subscription_instances)
 
-        activities, pipeline_data = action_manager.generate_activities(
-            subscription_instances, current_activities=current_activities
+        activities, __ = action_manager.generate_activities(
+            subscription_instances, global_pipeline_data=global_pipeline_data, current_activities=current_activities
         )
 
         # 记录每个step的起始id及步骤名称
@@ -128,6 +128,7 @@ def create_pipeline(
     subscription: models.Subscription,
     instances_action: Dict[str, Dict[str, str]],
     subscription_instances: List[models.SubscriptionInstanceRecord],
+    task_host_limit: int,
 ) -> Pipeline:
     """
       批量执行实例的步骤的动作
@@ -139,6 +140,7 @@ def create_pipeline(
           }
       }
       :param subscription_instances
+      :param task_host_limit:
     构造形如以下的pipeline，根据 ${TASK_HOST_LIMIT} 来决定单条流水线的执行机器数量
                          StartEvent
                              |
@@ -179,10 +181,10 @@ def create_pipeline(
         start = 0
         while start < len(instances):
             activities_start_event = build_instances_task(
-                instances[start : start + TASK_HOST_LIMIT], step_actions, subscription, global_pipeline_data
+                instances[start : start + task_host_limit], step_actions, subscription, global_pipeline_data
             )
             sub_processes.append(activities_start_event)
-            start = start + TASK_HOST_LIMIT
+            start = start + task_host_limit
     parallel_gw = builder.ParallelGateway()
     converge_gw = builder.ConvergeGateway()
     end_event = builder.EmptyEndEvent()
@@ -264,7 +266,6 @@ def create_task(
 
     # 前置错误需要跳过的主机，不创建订阅任务实例
     error_hosts = []
-
     topo_order = CmdbHandler.get_topo_order()
     # 批量创建订阅实例执行记录
     to_be_created_records_map = {}
@@ -274,10 +275,7 @@ def create_task(
             continue
 
         # 新装AGENT或PROXY会保存安装信息，需要清理
-        need_clean = step_action.get("agent") in [
-            InstallAgent.ACTION_NAME,
-            InstallProxy.ACTION_NAME,
-        ]
+        need_clean = step_action.get("agent") in [InstallAgent.ACTION_NAME, InstallProxy.ACTION_NAME]
         instance_info = instances[instance_id]
         host_info = instance_info["host"]
         record = models.SubscriptionInstanceRecord(
@@ -351,7 +349,7 @@ def create_task(
             continue
         to_be_created_records_map[instance_id] = record
 
-    # 保存instance_actions，用于重试场景
+    # 保存 instance_actions，用于重试场景
     subscription_task.actions = instance_actions
     if preview_only:
         # 仅做预览，不执行下面的代码逻辑，直接返回计算后的结果
@@ -380,33 +378,25 @@ def create_task(
             "error_hosts": error_hosts,
         }
 
-    # TODO 判断是否AGENT类型的任务，待AGENT流程统一化后干掉此处差异的逻辑分支
-    is_agent = "agent" in step_action
-    if is_agent:
-        to_be_saved_records, to_be_saved_pipelines, to_be_displayed_errors = agent_tasks.build_task(
-            subscription_task, instance_actions, to_be_created_records_map.values()
-        )
-        models.PipelineTree.objects.bulk_create(to_be_saved_pipelines, batch_size=batch_size)
-
     # 将最新属性置为False并批量创建订阅实例
     models.SubscriptionInstanceRecord.objects.filter(
-        subscription_id=subscription.id,
-        instance_id__in=instance_id_list,
+        subscription_id=subscription.id, instance_id__in=instance_id_list
     ).update(is_latest=False)
     models.SubscriptionInstanceRecord.objects.bulk_create(to_be_created_records_map.values(), batch_size=batch_size)
 
-    if not is_agent:
-
-        # 批量创建订阅实例，由于bulk_create返回的objs没有主键，此处需要重新查出
-        created_instance_records = list(
-            models.SubscriptionInstanceRecord.objects.filter(
-                subscription_id=subscription.id, instance_id__in=instance_id_list, is_latest=True
-            )
+    # 批量创建订阅实例，由于bulk_create返回的objs没有主键，此处需要重新查出
+    created_instance_records = list(
+        models.SubscriptionInstanceRecord.objects.filter(
+            subscription_id=subscription.id, instance_id__in=instance_id_list, is_latest=True
         )
+    )
 
-        pipeline = create_pipeline(subscription, instance_actions, created_instance_records)
-        # 保存pipeline id
-        subscription_task.pipeline_id = pipeline.id
+    task_host_limit = models.GlobalSettings.get_config(
+        models.GlobalSettings.KeyEnum.TASK_HOST_LIMIT.value, default=TASK_HOST_LIMIT
+    )
+    pipeline = create_pipeline(subscription, instance_actions, created_instance_records, task_host_limit)
+    # 保存pipeline id
+    subscription_task.pipeline_id = pipeline.id
     subscription_task.save(update_fields=["actions", "pipeline_id"])
     logger.info(
         "subscription({}),subscription_task({})  execute actions: {}".format(
@@ -451,8 +441,8 @@ def run_subscription_task_and_create_instance_transaction(func):
 def run_subscription_task_and_create_instance(
     subscription: models.Subscription,
     subscription_task: models.SubscriptionTask,
-    scope: Dict = None,
-    actions: Dict = None,
+    scope: Optional[Dict] = None,
+    actions: Optional[Dict] = None,
     preview_only: bool = False,
 ):
     """
@@ -503,12 +493,23 @@ def run_subscription_task_and_create_instance(
             instances, auto_trigger=subscription_task.is_auto_trigger, preview_only=preview_only
         )
         # 归类变更动作
-        instance_id_action_map = migrate_results["instance_actions"]
+        # eg: {"host|instance|host|1": "MAIN_INSTALL_PLUGIN"}
+        instance_id_action_map: Dict[str, str] = migrate_results["instance_actions"]
         for instance_id, action in instance_id_action_map.items():
             instance_actions[instance_id][step.step_id] = action
 
         # 归类变更原因
-        instance_id_action_reason_map = migrate_results["migrate_reasons"]
+        # eg:
+        # {
+        #   "host|instance|host|1": {
+        #     "processbeat": {
+        #       "target_version": "1.17.66",
+        #       "current_version": "1.17.66",
+        #       "migrate_type": "NOT_CHANGE"
+        #     }
+        #   }
+        # }
+        instance_id_action_reason_map: Dict[str, str] = migrate_results["migrate_reasons"]
         for instance_id, migrate_reason in instance_id_action_reason_map.items():
             instance_migrate_reasons[instance_id][step.step_id] = migrate_reason
 

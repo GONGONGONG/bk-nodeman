@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -18,6 +18,7 @@ from django.utils.translation import ugettext as _
 from apps.node_man import constants
 from apps.node_man.handlers.iam import IamHandler
 from apps.utils.local import get_request_username
+from version_log.utils import get_latest_version
 
 """
 context_processor for common(setting)
@@ -40,13 +41,7 @@ def get_docs_center_url():
 
 
 def get_title():
-    if settings.BKAPP_RUN_ENV == constants.BkappRunEnvType.CE.value:
-        return _("节点管理 | 蓝鲸智云社区版")
-
-    if settings.RUN_VER == "open":
-        return _("节点管理 | 蓝鲸智云企业版")
-    else:
-        return _("节点管理 | 蓝鲸")
+    return _("节点管理 | 腾讯蓝鲸智云")
 
 
 def mysetting(request):
@@ -75,6 +70,7 @@ def mysetting(request):
         "NOW": datetime.datetime.now(),
         "RUN_VER": settings.RUN_VER,
         "WEB_TITLE": get_title(),
+        "VERSION": get_latest_version(),
         "DEFAULT_CLOUD": constants.DEFAULT_CLOUD,
         "USERNAME": request.user.username,
         # 是否使用权限中心

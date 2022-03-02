@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -53,11 +53,6 @@ class ApIDNotExistsError(NodeManBaseException):
     ERROR_CODE = 7
 
 
-class BusinessNotPermissionError(NodeManBaseException):
-    MESSAGE = _("不存在某业务权限.")
-    ERROR_CODE = 8
-
-
 class IpInUsedError(NodeManBaseException):
     MESSAGE = _("该Ip已被占用.")
     ERROR_CODE = 9
@@ -88,19 +83,9 @@ class CloudNotPermissionError(NodeManBaseException):
     ERROR_CODE = 14
 
 
-class JobNotPermissionError(NodeManBaseException):
-    MESSAGE = _("不存在某任务的权限.")
-    ERROR_CODE = 14
-
-
 class ApNotChooseError(NodeManBaseException):
     MESSAGE = _("该主机未选择接入点，请尝试重装主机自动选择接入点")
     ERROR_CODE = 15
-
-
-class CmdbAddCloudPermissionError(NodeManBaseException):
-    MESSAGE = _("没有Cmdb增加云区域的权限.")
-    ERROR_CODE = 16
 
 
 class NotSuperUserError(NodeManBaseException):
@@ -178,11 +163,6 @@ class PolicyNotExistError(NodeManBaseException):
     ERROR_CODE = 31
 
 
-class PolicyNotPermissionError(NodeManBaseException):
-    MESSAGE = _("不存在某策略权限")
-    ERROR_CODE = 32
-
-
 class PluginConfigTplNotExistError(NodeManBaseException):
     MESSAGE = _("插件配置模板不存在")
     ERROR_CODE = 33
@@ -213,3 +193,13 @@ class PluginUploadError(NodeManBaseException):
     MESSAGE = _("插件上传失败")
     MESSAGE_TPL = _("插件上传失败: plugin_name -> {plugin_name}, error -> {error}")
     ERROR_CODE = 38
+
+
+class UrlNotReachableError(NodeManBaseException):
+    MESSAGE = _("访问地址不可达")
+    ERROR_CODE = 39
+
+
+class PluginResourcePolicyNoDiff(NodeManBaseException):
+    MESSAGE = _("插件配置未变更，无需执行")
+    ERROR_CODE = 40

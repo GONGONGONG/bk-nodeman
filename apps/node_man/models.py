@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -54,6 +54,7 @@ from apps.node_man.exceptions import (
     HostNotExists,
     InstallChannelNotExistsError,
     QueryGlobalSettingsException,
+    UrlNotReachableError,
 )
 from apps.utils import files, orm
 from common.log import logger
@@ -80,10 +81,17 @@ class GlobalSettings(models.Model):
     class KeyEnum(Enum):
         """枚举全局配置KEY，避免散落在各处难以维护"""
 
+        # 并发控制相关配置
+        CONCURRENT_CONTROLLER_SETTINGS = "CONCURRENT_CONTROLLER_SETTINGS"
+        # 订阅任务单Pipeline执行主机数
+        TASK_HOST_LIMIT = "TASK_HOST_LIMIT"
+        # DB 每批操作数
+        BATCH_SIZE = "BATCH_SIZE"
         USE_TJJ = "USE_TJJ"  # 是否启用TJJ
         REGISTER_WIN_SERVICE_WITH_PASS = "REGISTER_WIN_SERVICE_WITH_PASS"  # 是否使用密码注册windows服务
         CONFIG_POLICY_BY_SOPS = "CONFIG_POLICY_BY_SOPS"  # 是否使用标准运维自动开通网络策略
         CONFIG_POLICY_BY_TENCENT_VPC = "CONFIG_POLICY_BY_TENCENT_VPC"  # 是否使用腾讯云SDK自动开通网络策略
+        SECURITY_GROUP_TYPE = "SECURITY_GROUP_TYPE"  # 开通Proxy策略类型，可在BaseSecurityGroupAdapter中扩展
         APIGW_PUBLIC_KEY = "APIGW_PUBLIC_KEY"  # APIGW公钥，从PaaS接口获取或直接配到settings中
         SYNC_CMDB_HOST_BIZ_BLACKLIST = "SYNC_CMDB_HOST_BIZ_BLACKLIST"  # 排除掉黑名单业务的主机同步，比如 SA 业务，包含大量主机但无需同步
         LAST_SUB_TASK_ID = "LAST_SUB_TASK_ID"  # 定时任务 collect_auto_trigger_job 用于记录最后一个同步的 sub_task ID
@@ -369,45 +377,41 @@ class Host(models.Model):
             return {}
         return {host.bk_host_id: host for host in cls.objects.filter(**conditions)}
 
-    def get_random_alive_proxy(self):
+    def get_random_alive_proxy(self, proxies=None):
         """
         随机选一台可用的proxy
         """
-        proxy_ids = self.proxies.values_list("bk_host_id", flat=True)
-        alive_proxies = ProcessStatus.objects.filter(
-            bk_host_id__in=proxy_ids, name=ProcessStatus.GSE_AGENT_PROCESS_NAME, status=constants.ProcStateType.RUNNING
-        )
+        proxies = proxies or self.proxies
+        alive_proxies = [proxy for proxy in proxies if proxy.status == constants.ProcStateType.RUNNING]
         if not alive_proxies:
             raise AliveProxyNotExistsError(_("主机所属云区域不存在可用Proxy"))
         else:
-            proxy_id = random.choice(alive_proxies).bk_host_id
-            return Host.objects.get(bk_host_id=proxy_id)
+            return random.choice(alive_proxies)
 
     @property
     def identity(self) -> IdentityData:
-
         if not getattr(self, "_identity", None):
             self._identity, created = IdentityData.objects.get_or_create(bk_host_id=self.bk_host_id)
         return self._identity
 
     @property
     def ap(self):
-        if not getattr(self, "_ap", None):
-            # 未选择接入点时，默认取第一个接入点
-            if self.ap_id == constants.DEFAULT_AP_ID:
-                ap = AccessPoint.objects.first()
-                if ap:
-                    self._ap = ap
-                else:
-                    raise ApIDNotExistsError
-            else:
-                try:
-                    self._ap = AccessPoint.objects.get(pk=self.ap_id)
-                except AccessPoint.DoesNotExist:
-                    raise ApIDNotExistsError
+        if getattr(self, "_ap", None):
+            return self._ap
+        # 未选择接入点时，默认取第一个接入点
+        if self.ap_id == constants.DEFAULT_AP_ID:
+            self._ap = AccessPoint.get_default_ap()
+        else:
+            try:
+                self._ap = AccessPoint.objects.get(pk=self.ap_id)
+            except AccessPoint.DoesNotExist:
+                raise ApIDNotExistsError({"ap_id": self.ap_id})
         return self._ap
 
+    @property
     def install_channel(self):
+        if getattr(self, "_install_channel", None):
+            return self._install_channel
         # 指定了安装通道，使用安装通道的信息作为跳板和上游
         if self.install_channel_id:
             try:
@@ -433,33 +437,51 @@ class Host(models.Model):
                 "btfileserver": [server["inner_ip"] for server in self.ap.btfileserver],
                 "dataserver": [server["inner_ip"] for server in self.ap.dataserver],
             }
-        return jump_server, upstream_servers
+        self._install_channel = jump_server, upstream_servers
+        return self._install_channel
 
     @property
     def agent_config(self):
+        """不要在循环中使用该方法，会有 n+1 查询问题"""
         os_type = self.os_type.lower()
-        # AIX、SOLARIS与Linux共用配置
-        if self.os_type in [constants.OsType.AIX, constants.OsType.SOLARIS]:
+        # 非 Windows 机器共用 Linux 配置
+        if self.os_type != constants.OsType.WINDOWS:
             os_type = constants.OsType.LINUX.lower()
         return self.ap.agent_config[os_type]
 
     @property
     def proxies(self):
-        return Host.objects.filter(
+        if getattr(self, "_proxies", None):
+            return self._proxies
+        proxy_objs = Host.objects.filter(
             bk_cloud_id=self.bk_cloud_id,
             node_type=constants.NodeType.PROXY,
         )
+        proxy_host_ids = [proxy.bk_host_id for proxy in proxy_objs]
+        alive_proxies = ProcessStatus.objects.filter(
+            bk_host_id__in=proxy_host_ids,
+            name=ProcessStatus.GSE_AGENT_PROCESS_NAME,
+            status=constants.ProcStateType.RUNNING,
+        )
+        host_id_status_map = {proxy.bk_host_id: proxy.status for proxy in alive_proxies}
+        for proxy in proxy_objs:
+            proxy.status = host_id_status_map.get(proxy.bk_host_id) or constants.ProcStateType.TERMINATED
+        self._proxies = proxy_objs
+        return self._proxies
+
+    @proxies.setter
+    def proxies(self, value):
+        self._proxies = value
 
     @property
-    def jump_server(self):
-        """获取跳板机"""
-        if self.install_channel_id:
-            jump_server, _ = self.install_channel()
-        elif self.node_type == constants.NodeType.PAGENT:
-            jump_server = self.get_random_alive_proxy()
-        else:
-            jump_server = None
-        return jump_server
+    def status(self):
+        if getattr(self, "_status", None):
+            return self._status
+        return None
+
+    @status.setter
+    def status(self, value):
+        self._status = value
 
     class Meta:
         verbose_name = _("主机信息")
@@ -605,6 +627,7 @@ class AccessPoint(models.Model):
     zk_password = AESTextField(_("密码"), blank=True, null=True)
     package_inner_url = models.TextField(_("安装包内网地址"))
     package_outer_url = models.TextField(_("安装包外网地址"))
+    # 历史遗留命名，现在该路径表示存储源的存储目录路径
     nginx_path = models.TextField(_("Nginx路径"), blank=True, null=True)
     agent_config = JSONField(_("Agent配置信息"))
     status = models.CharField(_("接入点状态"), max_length=255, default="", blank=True, null=True)
@@ -615,6 +638,7 @@ class AccessPoint(models.Model):
     port_config = JSONField(_("GSE端口配置"), default=dict)
     proxy_package = JSONField(_("Proxy上的安装包"), default=list)
     outer_callback_url = models.CharField(_("节点管理外网回调地址"), max_length=128, blank=True, null=True, default="")
+    callback_url = models.CharField(_("节点管理内网回调地址"), max_length=128, blank=True, null=True, default="")
 
     @classmethod
     def ap_id_obj_map(cls):
@@ -623,6 +647,51 @@ class AccessPoint(models.Model):
         # 未选择接入点的则取默认接入点
         ap_map.update({constants.DEFAULT_AP_ID: all_ap[0], None: all_ap[0]})
         return ap_map
+
+    @classmethod
+    def get_default_ap(cls):
+        """
+        获取默认接入点
+        :return:
+        """
+        default_ap = cls.objects.first()
+        if default_ap is None:
+            raise ApIDNotExistsError(_("默认接入点不存在"))
+        return default_ap
+
+    def get_agent_config(self, os_type: str) -> Dict[str, Any]:
+        """
+        获取指定操作系统的 Agent 配置信息
+        :param os_type: 操作系统类型，兼容 constants.OsType 的 大小写
+        :return:
+        """
+        os_type = os_type.lower()
+        if os_type in [constants.OsType.AIX, constants.OsType.SOLARIS]:
+            os_type = constants.OsType.LINUX.lower()
+        return self.agent_config[os_type]
+
+    @staticmethod
+    def check_callback_url_reachable(callback_url: str, raise_exception: bool = False) -> Dict[str, Union[str, bool]]:
+        """
+        校验回调地址是否可达
+        :param callback_url: 回调地址
+        :param raise_exception: 是否抛出异常
+        :return:
+        """
+
+        def _raise_exc_or_return(_err_msg: str):
+            if raise_exception:
+                raise UrlNotReachableError(_err_msg)
+            return {"result": False, "err_msg": _err_msg}
+
+        try:
+            response = requests.get(url=f"{callback_url}/version")
+            version_info = json.loads(response.content)
+        except Exception as exc:
+            return _raise_exc_or_return(_("回调地址请求失败，报错信息：{exc}").format(exc=exc))
+        if version_info.get("module") != "backend":
+            return _raise_exc_or_return(_("回调地址指向站点非节点管理后台"))
+        return {"result": True}
 
     @staticmethod
     def test(params: dict):
@@ -720,7 +789,7 @@ class Cloud(models.Model):
         all_cloud_map = {
             cloud.bk_cloud_id: cloud.bk_cloud_name for cloud in cls.objects.all().only("bk_cloud_id", "bk_cloud_name")
         }
-        all_cloud_map[constants.DEFAULT_CLOUD] = _("直连区域")
+        all_cloud_map[constants.DEFAULT_CLOUD] = str(_("直连区域"))
         return all_cloud_map
 
     class Meta:
@@ -1473,6 +1542,22 @@ class DownloadRecord(models.Model):
             )
 
 
+class PluginResourcePolicy(models.Model):
+    plugin_name = models.CharField(_("插件名"), max_length=32, db_index=True)
+    cpu = models.IntegerField(_("CPU限额"), default=constants.PLUGIN_DEFAULT_CPU_LIMIT)
+    mem = models.IntegerField(_("内存限额"), default=constants.PLUGIN_DEFAULT_MEM_LIMIT)
+    bk_biz_id = models.IntegerField(_("业务ID"), db_index=True)
+    bk_obj_id = models.CharField(_("CMDB对象ID"), max_length=32, db_index=True)
+    bk_inst_id = models.IntegerField(_("CMDB实例ID"), db_index=True)
+    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(_("更新时间"), auto_now=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("插件资源设置")
+        verbose_name_plural = _("插件资源设置")
+        unique_together = (("plugin_name", "bk_obj_id", "bk_inst_id"),)
+
+
 class PluginConfigTemplate(models.Model):
     """
     插件配置文件模板
@@ -1493,13 +1578,20 @@ class PluginConfigTemplate(models.Model):
     create_time = models.DateTimeField(_("创建时间"), auto_now_add=True)
     source_app_code = models.CharField(_("来源系统app code"), max_length=64)
 
+    os = models.CharField(
+        _("操作系统"), max_length=16, choices=constants.PLUGIN_OS_CHOICES, default=constants.PluginOsType.linux
+    )
+    cpu_arch = models.CharField(
+        _("CPU架构"), max_length=16, choices=constants.CPU_CHOICES, default=constants.CpuType.x86_64
+    )
+
     class Meta:
         verbose_name = _("插件配置文件模板")
         verbose_name_plural = _("插件配置文件模板表")
         # 唯一性限制
         unique_together = (
             # 对于同一个插件的同一个版本，同名配置文件只能存在一个
-            ("plugin_name", "plugin_version", "name", "version", "is_main"),
+            ("plugin_name", "plugin_version", "name", "version", "is_main", "os", "cpu_arch"),
         )
 
     def create_instance(self, data, creator=None, source_app_code=None):

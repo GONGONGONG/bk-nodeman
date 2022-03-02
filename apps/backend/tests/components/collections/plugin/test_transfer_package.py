@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -11,7 +11,6 @@ specific language governing permissions and limitations under the License.
 from unittest.mock import patch
 
 from apps.backend.components.collections.plugin import TransferPackageComponent
-from apps.backend.tests.components.collections.job import utils as job_utils
 from apps.backend.tests.components.collections.plugin import utils
 from apps.utils.unittest.testcase import CustomBaseTestCase
 from pipeline.component_framework.test import (
@@ -42,7 +41,7 @@ class TransferPackageTest(CustomBaseTestCase, ComponentTestMixin):
 
         patch(utils.JOB_JOBAPI, utils.JobMockClient).start()
         patch(utils.PLUGIN_CLIENT_MOCK_PATH, utils.JobMockClient).start()
-        patch(job_utils.CORE_FILES_JOB_API_PATH, utils.JobMockClient).start()
+        patch("apps.core.files.base.JobApi", utils.JobMockClient).start()
 
     def component_cls(self):
         return TransferPackageComponent

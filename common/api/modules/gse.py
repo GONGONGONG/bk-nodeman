@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -48,4 +48,22 @@ class _GseApi(BaseApi):
             url=GSE_APIGATEWAY_ROOT_V2 + "sync_proc_status/",
             module=self.MODULE,
             description="同步进程状态信息",
+        )
+        self.update_proc_info = DataAPI(
+            method="POST",
+            url=GSE_APIGATEWAY_ROOT_V2 + "update_proc_info/",
+            module=self.MODULE,
+            description="更新进程信息",
+        )
+        self.get_agent_info = DataAPI(
+            method="POST",
+            url=GSE_APIGATEWAY_ROOT_V2 + "get_agent_info/",
+            module=self.MODULE,
+            description="获取Agent版本信息",
+        )
+        self.get_agent_status = DataAPI(
+            method="POST",
+            url=GSE_APIGATEWAY_ROOT_V2 + "get_agent_status/",
+            module=self.MODULE,
+            description="获取Agent状态",
         )

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -15,11 +15,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from apps.component.esbclient import client_v2
-from apps.node_man.exceptions import (
-    CloudNotExistError,
-    CloudUpdateAgentError,
-    CmdbAddCloudPermissionError,
-)
+from apps.node_man.exceptions import CloudNotExistError, CloudUpdateAgentError
 from apps.node_man.handlers.cmdb import CmdbHandler
 from apps.node_man.tests.utils import (
     DIGITS,
@@ -87,19 +83,9 @@ class TestCmdb(TestCase):
     @patch("apps.node_man.handlers.cmdb.CmdbHandler.cmdb_or_cache_biz", cmdb_or_cache_biz)
     @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
     def test_add_cloud(self):
-        # 排除掉首字母是a的情况，否则有几率引发ComponentCallError
-        bk_cloud_name = "".join(random.choice(DIGITS) for x in range(8)).replace("a", "b")
-        id = CmdbHandler().add_cloud(bk_cloud_name)
-        self.assertLessEqual(int(id), 10000)
-
-        # CmdbAddCloudPermissionError
-        bk_cloud_name = "abc"
-        self.assertRaises(CmdbAddCloudPermissionError, CmdbHandler().add_cloud, bk_cloud_name)
-
-        # create_inst
-        bk_cloud_name = "bbc"
-        id = CmdbHandler().add_cloud(bk_cloud_name)
-        self.assertLessEqual(int(id), 1000)
+        bk_cloud_name = "".join(random.choice(DIGITS) for x in range(8))
+        bk_cloud_id = CmdbHandler().add_cloud(bk_cloud_name)
+        self.assertLessEqual(int(bk_cloud_id), 10000)
 
     @patch("apps.node_man.handlers.cmdb.CmdbHandler.cmdb_or_cache_biz", cmdb_or_cache_biz)
     @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
@@ -193,12 +179,12 @@ class TestCmdb(TestCase):
     @patch("apps.node_man.handlers.cmdb.CmdbHandler.cmdb_or_cache_biz", cmdb_or_cache_biz)
     @patch("apps.node_man.handlers.cmdb.client_v2", MockClient)
     def test_fetch_topo(self):
-        result = CmdbHandler().fetch_topo(1, True)
+        result = CmdbHandler().fetch_topo(1)
         self.assertEqual(len(result), 2)
         self.assertEqual(sorted([result[0]["id"], result[1]["id"]]), [10, 10166])
 
         # 异常
-        result = CmdbHandler().fetch_topo(2, True)
+        result = CmdbHandler().fetch_topo(2)
         self.assertEqual(len(result), 0)
 
 

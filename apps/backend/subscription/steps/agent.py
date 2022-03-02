@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -10,32 +10,28 @@ specific language governing permissions and limitations under the License.
 """
 
 import abc
-from functools import reduce
+from typing import List, Optional, Tuple, Union
 
 from django.conf import settings
 from django.utils.translation import ugettext as _
 
 from apps.backend import constants as backend_const
 from apps.backend.agent.manager import AgentManager
-from apps.backend.subscription.tools import create_group_id
-from apps.node_man import constants
-from apps.node_man.constants import ProcStateType
-from apps.node_man.models import (
-    GsePluginDesc,
-    Host,
-    SubscriptionInstanceRecord,
-    SubscriptionStep,
-)
+from apps.node_man import constants, models
+from apps.node_man.models import GsePluginDesc, SubscriptionStep
 from pipeline import builder
-from pipeline.builder import Data, NodeOutput, Var
+from pipeline.builder.flow.base import Element
 
 # 需分发到 PROXY 的文件（由于放到一次任务中会给用户等待过久的体验，因此拆分成多次任务）
-from ...components.collections.agent import RegisterHostComponent
 from .base import Action, Step
 
 
 class AgentStep(Step):
-    STEP_TYPE = "AGENT"
+    # 订阅步骤类型
+    STEP_TYPE = constants.SubStepType.AGENT
+
+    # 需要自动拉起的插件列表
+    auto_launch_plugins: Optional[List[models.GsePluginDesc]] = None
 
     def __init__(self, subscription_step: SubscriptionStep):
         self.auto_launch_plugins = GsePluginDesc.get_auto_launch_plugins()
@@ -99,108 +95,39 @@ class AgentAction(Action, abc.ABC):
     # 动作描述
     ACTION_DESCRIPTION = ""
 
-    def __init__(self, action_name, step: Step, instance_record: SubscriptionInstanceRecord):
+    def __init__(self, action_name, step: AgentStep, instance_record_ids: List[int]):
         """
         :param Step step: 步骤实例
-        :param models.SubscriptionInstanceRecord instance_record: 订阅实例执行记录
+        :param models.SubscriptionInstanceRecord instance_record_ids: 订阅实例执行记录
         """
         self.step = step
-        self.instance_record = instance_record
-        self._set_step_data({"action": action_name})
-        super().__init__(action_name, step, [instance_record.id])
+        super().__init__(action_name, step, instance_record_ids)
 
-    def _get_step_data(self):
-        return self.instance_record.get_step_data(self.step.step_id)
-
-    def _set_step_data(self, data):
-        self.instance_record.set_step_data(self.step.step_id, data)
-
-    def set_pipeline_id(self, pipeline_id):
-        self._set_step_data({"pipeline_id": pipeline_id})
-
-    def get_action_status(self):
-        return self._get_step_data()["status"]
-
-    def set_action_status(self, status):
-        self._set_step_data({"status": status})
-
-    def get_group_id(self):
-        """
-        获取插件组ID
-        """
-        return create_group_id(self.step.subscription, self.instance_record.instance_info)
-
-    def get_extra_info(self):
-        return self._get_step_data()["extra_info"].get(self.get_group_id())
-
-    def set_extra_info(self, extra_info):
-        self._set_step_data({"extra_info": {self.get_group_id(): extra_info}})
-
-    def get_all_step_data(self):
-        """
-        获取所有步骤的上下文信息
-        """
-        all_extra_info = {}
-        all_step_data = self.instance_record.get_all_step_data()
-        for step_data in all_step_data:
-            all_extra_info[step_data["id"]] = step_data["extra_info"].get(self.get_group_id())
-        return all_extra_info
-
-    def get_agent_manager(self, instance_record):
+    def get_agent_manager(self, subscription_instances: List[models.SubscriptionInstanceRecord]):
         """
         根据主机生成Agent管理器
         """
-        agent_manager = AgentManager(
-            instance_record=instance_record,
-            creator=self.step.subscription.creator,
-            blueking_language=self.step.subscription_step.params.get("blueking_language"),
-        )
-        return agent_manager
-
-    def generate_pipeline(self, agent_manager):
-        """
-        :param PluginManager agent_manager:
-        :return builder.SubProcess
-        """
-        start_event = builder.EmptyStartEvent()
-        end_event = builder.EmptyEndEvent()
-
-        activities, pipeline_data = self.generate_activities(agent_manager)
-        pipeline_data.inputs["${description}"] = Var(type=Var.PLAIN, value=self.ACTION_DESCRIPTION)
-
-        activities.insert(0, start_event)
-        need_register = False
-        for activity in activities:
-            if getattr(getattr(activity, "component", None), "code", "") == RegisterHostComponent.code:
-                # 需要注册主机得到bk_host_id后才能插入update_job_status
-                need_register = True
-        if need_register:
-            activities.insert(2, agent_manager.update_job_status())
-        else:
-            activities.insert(1, agent_manager.update_job_status())
-        activities.append(agent_manager.update_job_status())
-        activities.append(end_event)
-
-        # activity 编排
-        reduce(lambda l, r: l.extend(r), [act for act in activities if act])
-
-        sub_process = builder.SubProcess(
-            start=start_event,
-            name="[{}] {} {}:{}".format(
-                self.ACTION_NAME,
-                self.ACTION_DESCRIPTION,
-                agent_manager.host_info["bk_cloud_id"],
-                agent_manager.host_info["bk_host_innerip"],
-            ),
-            data=pipeline_data,
-        )
-        return sub_process
+        subscription_instance_ids = [sub_inst.id for sub_inst in subscription_instances]
+        return AgentManager(subscription_instance_ids, self.step)
 
     @abc.abstractmethod
     def _generate_activities(self, agent_manager):
         pass
 
-    def generate_activities(self, agent_manager):
+    def inject_vars_to_global_data(self, global_pipeline_data: builder.Data):
+        global_pipeline_data.inputs["${blueking_language}"] = builder.Var(
+            type=builder.Var.PLAIN, value=self.step.subscription_step.params.get("blueking_language")
+        )
+        super().inject_vars_to_global_data(global_pipeline_data)
+
+    def generate_activities(
+        self,
+        subscription_instances: List[models.SubscriptionInstanceRecord],
+        global_pipeline_data: builder.Data,
+        current_activities=None,
+    ) -> Tuple[List[Union[builder.ServiceActivity, Element]], Optional[builder.Data]]:
+        agent_manager = self.get_agent_manager(subscription_instances)
+        self.inject_vars_to_global_data(global_pipeline_data)
         return self._generate_activities(agent_manager)
 
     def append_delegate_activities(self, agent_manager, activities):
@@ -214,10 +141,6 @@ class AgentAction(Action, abc.ABC):
             activities.append(agent_manager.push_files_to_proxy(file))
         return activities
 
-    def execute(self, instance_record):
-        agent_manager = self.get_agent_manager(instance_record)
-        return self.generate_pipeline(agent_manager)
-
 
 class InstallAgent(AgentAction):
     """
@@ -228,43 +151,16 @@ class InstallAgent(AgentAction):
     ACTION_DESCRIPTION = "安装"
 
     def _generate_activities(self, agent_manager: AgentManager):
-        register_host = agent_manager.register_host()
-
-        if agent_manager.host_info["is_manual"]:
-            self.ACTION_DESCRIPTION = "手动安装"
-            install_name = _("手动安装")
-        else:
-            install_name = _("安装")
-
         activities = [
-            register_host,
+            agent_manager.register_host(),
+            agent_manager.query_tjj_password() if settings.USE_TJJ else None,
             agent_manager.choose_ap(),
-            agent_manager.install(install_name),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING),
+            agent_manager.install(),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
-
-        # 把注册 CMDB 得到的bk_host_id 作为输出给到后续节点使用
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = NodeOutput(
-            source_act=register_host.id,
-            source_key="bk_host_id",
-            type=Var.SPLICE,
-            value="",
-        )
-        pipeline_data.inputs["${is_manual}"] = NodeOutput(
-            source_act=register_host.id,
-            source_key="is_manual",
-            type=Var.SPLICE,
-            value=False,
-        )
-
-        # 验证类型为TJJ需要查询密码增加在第一步
-        if agent_manager.host_info["auth_type"] == constants.AuthType.TJJ_PASSWORD:
-            activities.insert(1, agent_manager.query_tjj_password())
-
         activities = self.append_delegate_activities(agent_manager, activities)
 
-        return activities, pipeline_data
+        return list(filter(None, activities)), None
 
 
 class ReinstallAgent(AgentAction):
@@ -277,28 +173,15 @@ class ReinstallAgent(AgentAction):
 
     def _generate_activities(self, agent_manager: AgentManager):
 
-        is_manual = Host.objects.get(bk_host_id=agent_manager.host_info["bk_host_id"]).is_manual
-        if is_manual:
-            install_name = _("手动安装")
-        else:
-            install_name = _("安装")
-
         activities = [
+            agent_manager.query_tjj_password() if settings.USE_TJJ else None,
             agent_manager.choose_ap(),
-            agent_manager.install(install_name),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING),
+            agent_manager.install(),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
-
-        # 上云增加查询密码原子
-        if settings.USE_TJJ:
-            activities.insert(0, agent_manager.query_tjj_password())
-
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
         activities = self.append_delegate_activities(agent_manager, activities)
 
-        return activities, pipeline_data
+        return list(filter(None, activities)), None
 
 
 class UpgradeAgent(ReinstallAgent):
@@ -310,23 +193,12 @@ class UpgradeAgent(ReinstallAgent):
     ACTION_DESCRIPTION = "升级"
 
     def _generate_activities(self, agent_manager: AgentManager):
-        push_upgrade_package = agent_manager.bulk_push_upgrade_package_redis()
         activities = [
-            push_upgrade_package,
+            agent_manager.push_upgrade_package(),
             agent_manager.run_upgrade_command(),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
-
-        pipeline_data = Data()
-        pipeline_data.inputs["${package_name}"] = NodeOutput(
-            source_act=push_upgrade_package.id,
-            source_key="package_name",
-            type=Var.SPLICE,
-            value="",
-        )
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class RestartAgent(AgentAction):
@@ -339,14 +211,12 @@ class RestartAgent(AgentAction):
 
     def _generate_activities(self, agent_manager: AgentManager):
         activities = [
-            agent_manager.restart(),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING),
+            agent_manager.restart(skip_polling_result=True),
+            agent_manager.wait(5),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
 
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class RestartProxy(AgentAction):
@@ -359,14 +229,11 @@ class RestartProxy(AgentAction):
 
     def _generate_activities(self, agent_manager: AgentManager):
         activities = [
-            agent_manager.restart(),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING, name=_("查询Proxy状态")),
+            agent_manager.restart(skip_polling_result=True),
+            agent_manager.wait(5),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING, name=_("查询Proxy状态")),
         ]
-
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class InstallProxy(AgentAction):
@@ -379,44 +246,21 @@ class InstallProxy(AgentAction):
 
     def _generate_activities(self, agent_manager: AgentManager):
         register_host = agent_manager.register_host()
-        if agent_manager.host_info["is_manual"]:
-            self.ACTION_DESCRIPTION = "手动安装"
-            install_name = _("手动安装")
-        else:
-            install_name = _("安装")
-
         activities = [
             register_host,
             agent_manager.query_tjj_password() if settings.USE_TJJ else None,
-            agent_manager.configure_policy_by_sops() if settings.CONFIG_POLICY_BY_SOPS else None,
-            agent_manager.configure_policy() if settings.CONFIG_POLICY_BY_TENCENT_VPC else None,
+            agent_manager.configure_policy(),
             agent_manager.choose_ap(),
-            agent_manager.install(install_name),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING, name=_("查询Proxy状态")),
-            # agent_manager.check_policy_gse_to_proxy(),
+            agent_manager.install(),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING, name=_("查询Proxy状态")),
+            agent_manager.check_policy_gse_to_proxy(),
         ]
 
         activities = self.append_push_file_activities(agent_manager, activities)
         activities.append(agent_manager.start_nginx())
-
-        # 把注册 CMDB 得到的bk_host_id 作为输出给到后续节点使用
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = NodeOutput(
-            source_act=register_host.id,
-            source_key="bk_host_id",
-            type=Var.SPLICE,
-            value="",
-        )
-        pipeline_data.inputs["${is_manual}"] = NodeOutput(
-            source_act=register_host.id,
-            source_key="is_manual",
-            type=Var.SPLICE,
-            value=False,
-        )
-
         activities = self.append_delegate_activities(agent_manager, activities)
 
-        return activities, pipeline_data
+        return list(filter(None, activities)), None
 
 
 class ReinstallProxy(AgentAction):
@@ -429,21 +273,14 @@ class ReinstallProxy(AgentAction):
 
     def _generate_activities(self, agent_manager: AgentManager):
 
-        is_manual = Host.objects.get(bk_host_id=agent_manager.host_info["bk_host_id"]).is_manual
-        if is_manual:
-            install_name = _("手动安装")
-        else:
-            install_name = _("安装")
-
         activities = [
             agent_manager.query_tjj_password() if settings.USE_TJJ else None,
-            agent_manager.configure_policy_by_sops() if settings.CONFIG_POLICY_BY_SOPS else None,
-            agent_manager.configure_policy() if settings.CONFIG_POLICY_BY_TENCENT_VPC else None,
+            agent_manager.configure_policy(),
             agent_manager.choose_ap(),
-            agent_manager.install(install_name),
-            agent_manager.wait(30),  # 重装时由于初始 Proxy 的状态仍是RUNNING，这里等待30秒再重新查询
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING, name=_("查询Proxy状态")),
-            # agent_manager.check_policy_gse_to_proxy(),
+            agent_manager.install(),
+            # 重装时由于初始 Proxy 的状态仍是RUNNING，这里等待30秒再重新查询
+            agent_manager.wait(30),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING, name=_("查询Proxy状态")),
         ]
 
         activities = self.append_delegate_activities(agent_manager, activities)
@@ -452,11 +289,7 @@ class ReinstallProxy(AgentAction):
         activities = self.append_push_file_activities(agent_manager, activities)
         activities.append(agent_manager.start_nginx())
 
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-        pipeline_data.inputs["${is_manual}"] = Var(type=Var.PLAIN, value=is_manual)
-
-        return activities, pipeline_data
+        return list(filter(None, activities)), None
 
 
 class UpgradeProxy(ReinstallProxy):
@@ -468,28 +301,18 @@ class UpgradeProxy(ReinstallProxy):
     ACTION_DESCRIPTION = "升级"
 
     def _generate_activities(self, agent_manager: AgentManager):
-        push_upgrade_package = agent_manager.bulk_push_upgrade_package_redis()
         activities = [
-            push_upgrade_package,
+            agent_manager.push_upgrade_package(),
             agent_manager.run_upgrade_command(),
             agent_manager.wait(30),
-            agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
 
         # 推送文件到proxy
         activities = self.append_push_file_activities(agent_manager, activities)
         activities.append(agent_manager.start_nginx())
 
-        pipeline_data = Data()
-        pipeline_data.inputs["${package_name}"] = NodeOutput(
-            source_act=push_upgrade_package.id,
-            source_key="package_name",
-            type=Var.SPLICE,
-            value="",
-        )
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class ReplaceProxy(InstallProxy):
@@ -513,14 +336,11 @@ class UninstallAgent(AgentAction):
         activities = [
             agent_manager.query_tjj_password() if settings.USE_TJJ else None,
             agent_manager.uninstall_agent(),
-            agent_manager.get_agent_status(expect_status=ProcStateType.UNKNOWN),
-            agent_manager.update_process_status(status=ProcStateType.NOT_INSTALLED),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.UNKNOWN),
+            agent_manager.update_process_status(status=constants.ProcStateType.NOT_INSTALLED),
         ]
 
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return list(filter(None, activities)), None
 
 
 class UninstallProxy(AgentAction):
@@ -534,14 +354,11 @@ class UninstallProxy(AgentAction):
     def _generate_activities(self, agent_manager: AgentManager):
         activities = [
             agent_manager.uninstall_proxy(),
-            agent_manager.get_agent_status(expect_status=ProcStateType.UNKNOWN, name=_("查询Proxy状态")),
-            agent_manager.update_process_status(status=ProcStateType.NOT_INSTALLED),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.UNKNOWN, name=_("查询Proxy状态")),
+            agent_manager.update_process_status(status=constants.ProcStateType.NOT_INSTALLED),
         ]
 
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class ReloadAgent(AgentAction):
@@ -555,20 +372,13 @@ class ReloadAgent(AgentAction):
     def _generate_activities(self, agent_manager: AgentManager):
         activities = [
             agent_manager.check_agent_status(),
+            agent_manager.update_install_info(),
             agent_manager.render_and_push_gse_config(),
+            agent_manager.reload_agent(skip_polling_result=True),
+            agent_manager.wait(5),
+            agent_manager.get_agent_status(expect_status=constants.ProcStateType.RUNNING),
         ]
-
-        os_type = constants.OS_TYPE.get(agent_manager.host_info.get("bk_os_type"))
-        if os_type != constants.OsType.WINDOWS:
-            activities.append(agent_manager.reload_agent())
-        else:
-            activities.append(agent_manager.restart()),
-            activities.append(agent_manager.get_agent_status(expect_status=ProcStateType.RUNNING)),
-
-        pipeline_data = Data()
-        pipeline_data.inputs["${bk_host_id}"] = Var(type=Var.PLAIN, value=agent_manager.host_info["bk_host_id"])
-
-        return activities, pipeline_data
+        return activities, None
 
 
 class ReloadProxy(ReloadAgent):

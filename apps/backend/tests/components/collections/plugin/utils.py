@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -13,6 +13,7 @@ import copy
 from apps.backend.api.constants import GseDataErrCode, JobDataStatus, JobIPStatus
 from apps.backend.subscription import tools
 from apps.backend.subscription.tools import create_group_id
+from apps.exceptions import ComponentCallError
 from apps.node_man import constants as const
 from apps.node_man import models
 from apps.node_man.models import SubscriptionStep
@@ -47,6 +48,9 @@ JOB_ID = 56
 JOB_TASK_ID = 100
 
 BK_HOST_ID = 23333
+
+SERVICE_TEMPLATE_ID = 1
+SERVICE_TEMPLATE_ID_2 = 2
 
 # 当前原子任务id
 JOB_TASK_PIPELINE_ID = "1ae89ce9deec319bbd8727a0c4b2ca82"
@@ -381,6 +385,22 @@ class CmdbClient:
                 {"bk_obj_id": "set"},
                 {"bk_obj_id": "module"},
                 {"bk_obj_id": "host"},
+            ]
+
+        @classmethod
+        def find_host_service_template(cls, *args, **kwargs):
+            if len(args[0]["bk_host_id"]) > 1:
+                # 模拟接口不存在的场景
+                raise ComponentCallError()
+
+            return [
+                {
+                    "bk_host_id": bk_host_id,
+                    "service_template_id": [SERVICE_TEMPLATE_ID]
+                    if bk_host_id == BK_HOST_ID
+                    else [SERVICE_TEMPLATE_ID_2],
+                }
+                for bk_host_id in args[0]["bk_host_id"]
             ]
 
 

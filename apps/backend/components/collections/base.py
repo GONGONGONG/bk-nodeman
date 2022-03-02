@@ -1,26 +1,35 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-import operator
 import traceback
-from functools import reduce, wraps
-from typing import Dict, List, Set, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
-from django.db.models import F, Q, Value
+from django.db.models import Value
 from django.db.models.functions import Concat
 from django.utils import timezone
 from django.utils.translation import ugettext as _
 
-from apps.backend.subscription import errors
-from apps.backend.subscription.tools import create_group_id
 from apps.node_man import constants, models
+from apps.utils.cache import class_member_cache
+from apps.utils.exc import ExceptionHandler
 from apps.utils.time_handler import strftime_local
 from common.log import logger
 from pipeline.core.flow import Service
@@ -62,49 +71,44 @@ class LogMaker:
         return self.get_log_content(LogLevel.DEBUG, content)
 
 
-def exception_handler(service_func):
-    # 原子执行逻辑最外层异常兜底
-    @wraps(service_func)
-    def wrapper(self, data, parent_data, *args, **kwargs):
-        act_name = data.get_one_of_inputs("act_name")
-        sub_inst_ids = self.get_subscription_instance_ids(data)
-        try:
-            return service_func(self, data, parent_data, *args, **kwargs)
-        except Exception as error:
-            error_msg = _("{act_name} 失败: {err}，请先尝试查看错误日志进行处理，若无法解决，请联系管理员处理").format(
-                act_name=act_name, err=str(error), msg=traceback.format_exc()
-            )
-            logger.exception(error_msg)
-            # 尝试更新实例状态
-            self.bulk_set_sub_inst_act_status(
-                sub_inst_ids=sub_inst_ids,
-                status=constants.JobStatusType.FAILED,
-                common_log=self.log_maker.error_log(error_msg),
-            )
-            # traceback日志进行折叠
-            self.log_debug(
-                sub_inst_ids=sub_inst_ids,
-                log_content="{debug_begin}\n{traceback}\n{debug_end}".format(
-                    debug_begin=" Begin of collected logs: ".center(40, "*"),
-                    traceback=traceback.format_exc(),
-                    debug_end=" End of collected logs ".center(40, "*"),
-                ),
-            )
-            if self.schedule == service_func:
-                self.finish_schedule()
-            return False
+def service_run_exc_handler(
+    wrapped: Callable, instance: "BaseService", args: Tuple[Any], kwargs: Dict[str, Any], exc: Exception
+) -> bool:
+    if args:
+        data = args[0]
+    else:
+        data = kwargs["data"]
 
-    return wrapper
+    act_name = data.get_one_of_inputs("act_name")
+    sub_inst_ids = instance.get_subscription_instance_ids(data)
+
+    error_msg = _("{act_name} 失败: {exc}，请先尝试查看错误日志进行处理，若无法解决，请联系管理员处理").format(act_name=act_name, exc=str(exc))
+    logger.exception(error_msg)
+
+    instance.bulk_set_sub_inst_act_status(
+        sub_inst_ids=sub_inst_ids,
+        status=constants.JobStatusType.FAILED,
+        common_log=instance.log_maker.error_log(error_msg),
+    )
+
+    # traceback日志进行折叠
+    instance.log_debug(sub_inst_ids=sub_inst_ids, log_content=traceback.format_exc(), fold=True)
+
+    if instance.schedule == wrapped:
+        instance.finish_schedule()
+    return False
 
 
 class LogMixin:
-    log_maker_class = LogMaker
+
+    # 日志类
+    log_maker_class: Type[LogMaker] = LogMaker
 
     def get_log_maker(self):
         return self.log_maker_class()
 
     def log_base(
-        self, sub_inst_ids: [int, List[int], None] = None, log_content: str = None, level: int = LogLevel.INFO
+        self, sub_inst_ids: Union[int, List[int], None] = None, log_content: str = None, level: int = LogLevel.INFO
     ):
         """
         记录日志
@@ -126,17 +130,39 @@ class LogMixin:
             update_time=timezone.now(),
         )
 
-    def log_info(self, sub_inst_ids: [int, List[int], None] = None, log_content: str = None):
+    def log_info(self, sub_inst_ids: Union[int, Iterable[int], None] = None, log_content: str = None):
         self.log_base(sub_inst_ids, log_content, level=LogLevel.INFO)
 
-    def log_warning(self, sub_inst_ids: [int, List[int], None] = None, log_content: str = None):
+    def log_warning(self, sub_inst_ids: Union[int, Iterable[int], None] = None, log_content: str = None):
         self.log_base(sub_inst_ids, log_content, level=LogLevel.WARNING)
 
-    def log_error(self, sub_inst_ids: [int, List[int], None] = None, log_content: str = None):
+    def log_error(self, sub_inst_ids: Union[int, Iterable[int], None] = None, log_content: str = None):
         self.log_base(sub_inst_ids, log_content, level=LogLevel.ERROR)
 
-    def log_debug(self, sub_inst_ids: [int, List[int], None] = None, log_content: str = None):
+    def log_debug(
+        self, sub_inst_ids: Union[int, Iterable[int], None] = None, log_content: str = None, fold: bool = False
+    ):
+        if fold:
+            # 背景：前端会识别该模式并折叠文本
+            log_content = "{debug_begin}\n{content}\n{debug_end}".format(
+                debug_begin=" Begin of collected logs: ".center(40, "*"),
+                content=log_content,
+                debug_end=" End of collected logs ".center(40, "*"),
+            )
         self.log_base(sub_inst_ids, log_content, level=LogLevel.DEBUG)
+
+
+class DBHelperMixin:
+    @property
+    @class_member_cache()
+    def batch_size(self) -> int:
+        """
+        获取 update / create 每批次操作数
+        批量创建或更新进程状态表，受限于部分MySQL配置的原因，这里 BATCH_SIZE 支持可配置，默认为100
+        :return:
+        """
+        batch_size = models.GlobalSettings.get_config(models.GlobalSettings.KeyEnum.BATCH_SIZE.value, default=100)
+        return batch_size
 
 
 class CommonData:
@@ -148,32 +174,29 @@ class CommonData:
     def __init__(
         self,
         bk_host_ids: Set[int],
-        process_statuses: List[models.ProcessStatus],
         host_id_obj_map: Dict[int, models.Host],
-        target_host_objs: List[models.Host],
+        sub_inst_id__host_id_map: Dict[int, int],
         ap_id_obj_map: Dict[int, models.AccessPoint],
         subscription: models.Subscription,
-        policy_step_adapter,
-        group_id_instance_map: Dict[str, models.SubscriptionInstanceRecord],
         subscription_instances: List[models.SubscriptionInstanceRecord],
         subscription_instance_ids: Set[int],
     ):
-        from apps.backend.subscription.steps.adapter import PolicyStepAdapter
-
         self.bk_host_ids = bk_host_ids
-        self.process_statuses = process_statuses
         self.host_id_obj_map = host_id_obj_map
-        self.target_host_objs = target_host_objs
+        self.sub_inst_id__host_id_map = sub_inst_id__host_id_map
         self.ap_id_obj_map = ap_id_obj_map
         self.subscription = subscription
-        self.policy_step_adapter: PolicyStepAdapter = policy_step_adapter
-        self.group_id_instance_map = group_id_instance_map
-        self.plugin_name = policy_step_adapter.plugin_name
         self.subscription_instances = subscription_instances
         self.subscription_instance_ids = subscription_instance_ids
 
 
-class BaseService(Service, LogMixin):
+class BaseService(Service, LogMixin, DBHelperMixin):
+
+    # 失败订阅实例ID - 失败原因 映射关系
+    failed_subscription_instance_id_reason_map: Optional[Dict[int, Any]] = None
+    # 日志制作类实例
+    log_maker: Optional[LogMaker] = None
+
     def __init__(self, *args, **kwargs):
         self.failed_subscription_instance_id_reason_map: Dict = {}
         self.log_maker = self.get_log_maker()
@@ -192,24 +215,10 @@ class BaseService(Service, LogMixin):
 
     def sub_inst_failed_handler(self, sub_inst_ids: Union[List[int], Set[int]]):
         """
-        订阅实例失败处理器，主要用于记录日志并把自增重试次数
+        订阅实例失败处理器
         :param sub_inst_ids: 订阅实例ID列表/集合
         """
-        instance_record_objs = list(models.SubscriptionInstanceRecord.objects.filter(id__in=sub_inst_ids))
-        # 同一批实例来自同一订阅
-        subscription = models.Subscription.get_subscription(instance_record_objs[0].subscription_id, show_deleted=True)
-        group_ids = [
-            create_group_id(subscription, inst_record_obj.instance_info) for inst_record_obj in instance_record_objs
-        ]
-        models.ProcessStatus.objects.filter(source_id=subscription.id, group_id__in=group_ids).update(
-            retry_times=F("retry_times") + 1
-        )
-
-        logger.info(
-            f"subscription_id -> [{subscription.id}], subscription_instance_ids -> {sub_inst_ids}, "
-            f"act_id -> {self.id}: 插件部署失败，重试次数 +1"
-        )
-        self.log_warning(sub_inst_ids=sub_inst_ids, log_content=_("插件部署失败，重试次数 +1"))
+        raise NotImplementedError()
 
     def bulk_set_sub_inst_status(self, status: str, sub_inst_ids: Union[List[int], Set[int]]):
         """批量设置实例状态，对于实例及原子的状态更新只应该在base内部使用"""
@@ -258,10 +267,7 @@ class BaseService(Service, LogMixin):
         初始化常用数据，注意这些数据不能放在 self 属性里，否则会产生较大的 process snap shot，
         另外也尽量不要在 schedule 中使用，否则多次回调可能引起性能问题
         """
-        from apps.backend.subscription.steps.adapter import PolicyStepAdapter
-
         subscription_instance_ids = BaseService.get_subscription_instance_ids(data)
-
         subscription_instances = list(
             models.SubscriptionInstanceRecord.objects.filter(id__in=subscription_instance_ids)
         )
@@ -269,54 +275,27 @@ class BaseService(Service, LogMixin):
         subscription = models.Subscription.get_subscription(
             subscription_instances[0].subscription_id, show_deleted=True
         )
-
-        subscription_step_id = data.get_one_of_inputs("subscription_step_id")
-        try:
-            subscription_step = models.SubscriptionStep.objects.get(id=subscription_step_id)
-        except models.SubscriptionStep.DoesNotExist:
-            raise errors.SubscriptionStepNotExist({"step_id": subscription_step_id})
-
         bk_host_ids = set()
         subscription_instance_ids = set()
-        group_id_instance_map: Dict[str, models.SubscriptionInstanceRecord] = {}
+        sub_inst_id__host_id_map = {}
         for subscription_instance in subscription_instances:
-            bk_host_ids.add(subscription_instance.instance_info["host"]["bk_host_id"])
-            group_id = create_group_id(subscription, subscription_instance.instance_info)
-            group_id_instance_map[group_id] = subscription_instance
             subscription_instance_ids.add(subscription_instance.id)
+            # 兼容新安装Agent主机无bk_host_id的场景
+            if "bk_host_id" in subscription_instance.instance_info["host"]:
+                bk_host_id = subscription_instance.instance_info["host"]["bk_host_id"]
+                bk_host_ids.add(bk_host_id)
+                sub_inst_id__host_id_map[subscription_instance.id] = bk_host_id
 
-        target_host_objs = None
-        if subscription.target_hosts:
-            # 目标主机，用于远程采集场景
-            query_conditions = reduce(
-                operator.or_,
-                [
-                    Q(inner_ip=target_host["ip"], bk_cloud_id=target_host["bk_cloud_id"])
-                    for target_host in subscription.target_hosts
-                ],
-            )
-            target_host_objs = models.Host.objects.filter(query_conditions)
-            for host in target_host_objs:
-                bk_host_ids.add(host.bk_host_id)
-
-        policy_step_adapter = PolicyStepAdapter(subscription_step)
         host_id_obj_map: Dict[int, models.Host] = models.Host.host_id_obj_map(bk_host_id__in=bk_host_ids)
         ap_id_obj_map = models.AccessPoint.ap_id_obj_map()
-
-        process_statuses = models.ProcessStatus.objects.filter(
-            name=policy_step_adapter.plugin_name, group_id__in=group_id_instance_map.keys()
-        )
         return CommonData(
-            bk_host_ids,
-            process_statuses,
-            host_id_obj_map,
-            target_host_objs,
-            ap_id_obj_map,
-            subscription,
-            policy_step_adapter,
-            group_id_instance_map,
-            subscription_instances,
-            subscription_instance_ids,
+            bk_host_ids=bk_host_ids,
+            host_id_obj_map=host_id_obj_map,
+            sub_inst_id__host_id_map=sub_inst_id__host_id_map,
+            ap_id_obj_map=ap_id_obj_map,
+            subscription=subscription,
+            subscription_instances=subscription_instances,
+            subscription_instance_ids=subscription_instance_ids,
         )
 
     def set_current_id(self, subscription_instance_ids: List[int]):
@@ -333,7 +312,7 @@ class BaseService(Service, LogMixin):
         return bool(data.outputs.succeeded_subscription_instance_ids)
 
     def _execute(self, data, parent_data, common_data: CommonData):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def _schedule(self, data, parent_data, callback_data=None):
         pass
@@ -402,7 +381,7 @@ class BaseService(Service, LogMixin):
 
         return bool(succeeded_subscription_instance_ids)
 
-    @exception_handler
+    @ExceptionHandler(exc_handler=service_run_exc_handler)
     def execute(self, data, parent_data):
         common_data = self.get_common_data(data)
         act_name = data.get_one_of_inputs("act_name")
@@ -421,7 +400,7 @@ class BaseService(Service, LogMixin):
         self.set_current_id(subscription_instance_ids)
         return self.run(self._execute, data, parent_data, common_data=common_data)
 
-    @exception_handler
+    @ExceptionHandler(exc_handler=service_run_exc_handler)
     def schedule(self, data, parent_data, callback_data=None):
         return self.run(self._schedule, data, parent_data, callback_data=callback_data)
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -30,6 +30,7 @@ def new_api_module(module_name, api_name, module_dir="modules"):
 # 蓝鲸平台模块域名
 JobApi = SimpleLazyObject(lambda: new_api_module("job", "_JobApi"))
 GseApi = SimpleLazyObject(lambda: new_api_module("gse", "_GseApi"))
+SopsApi = SimpleLazyObject(lambda: new_api_module("sops", "_SopsApi"))
 # CMSI
 CmsiApi = SimpleLazyObject(lambda: new_api_module("cmsi", "_CmsiApi"))
 
@@ -42,6 +43,7 @@ EsbApi = SimpleLazyObject(lambda: new_api_module("esb", "_ESBApi"))
 __all__ = [
     "JobApi",
     "GseApi",
+    "SopsApi",
     "CmsiApi",
     "NodeApi",
 ]

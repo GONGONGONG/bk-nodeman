@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -11,6 +11,7 @@ specific language governing permissions and limitations under the License.
 
 
 from django.conf import settings
+from django.utils.translation import ugettext_lazy as _
 
 
 class OS(object):
@@ -104,9 +105,24 @@ GSE_RUNNING_TASK_CODE = 1000115
 class GseDataErrCode(object):
     SUCCESS = 0
     RUNNING = 115
+    AGENT_ABNORMAL = 117
     PROC_RUNNING = 828
-    NON_EXIST = 829
+    PROC_NO_RUNNING = 829
+    UNKNOWN_OP_TYPE = 832
+    POST_CHECK_ERROR = 836
     ALREADY_REGISTERED = 850
+    OP_FAILED = 65535
+
+    ERROR_CODE__ALIAS_MAP = {
+        SUCCESS: _("执行成功"),
+        RUNNING: _("正在执行"),
+        AGENT_ABNORMAL: _("Agent 状态异常"),
+        PROC_RUNNING: _("进程正在运行中，无需启动"),
+        PROC_NO_RUNNING: _("进程当前未运行，无需停止"),
+        UNKNOWN_OP_TYPE: _("操作类型非法"),
+        POST_CHECK_ERROR: _("进程启动失败（后置检查状态为未运行）"),
+        OP_FAILED: _("执行失败"),
+    }
 
 
 # task_result键值->GSE错误码映射

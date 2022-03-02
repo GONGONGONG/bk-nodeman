@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -173,7 +173,7 @@ class GseClient(object):
         for key, value in data.items():
             bk_cloud_id, bk_supplier_id, ip = key.split(":")[:3]
             result_type = constants.GSE_TASK_RESULT_MAP.get(value["error_code"], "failed")
-            if value["error_code"] == constants.GseDataErrCode.NON_EXIST:
+            if value["error_code"] == constants.GseDataErrCode.PROC_NO_RUNNING:
                 result_type = "success"
             result_content = dict(value, bk_cloud_id=bk_cloud_id, bk_supplier_id=bk_supplier_id, ip=ip)
             result[result_type].append(result_content)

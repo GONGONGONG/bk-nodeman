@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -14,6 +14,7 @@ from typing import Dict, Optional
 
 from blueapps.conf.default_settings import *  # noqa
 from blueapps.conf.log import get_logging_config_dict
+from django.utils.translation import ugettext_lazy as _
 
 import env
 from apps.utils.enum import EnhanceEnum
@@ -86,7 +87,6 @@ if "test" in sys.argv:
     index = INSTALLED_APPS.index("django_dbconn_retry")
     INSTALLED_APPS = INSTALLED_APPS[:index] + INSTALLED_APPS[index + 1 :]
 
-
 # 供应商账户，默认为0，内部为tencent
 DEFAULT_SUPPLIER_ACCOUNT = os.getenv("DEFAULT_SUPPLIER_ACCOUNT", "0")
 # 云区域ID，默认为0
@@ -100,6 +100,7 @@ except (TypeError, ValueError):
 JOB_VERSION = os.getenv("JOB_VERSION") or "V3"
 # 资源池业务ID
 BK_CMDB_RESOURCE_POOL_BIZ_ID = int(os.getenv("BK_CMDB_RESOURCE_POOL_BIZ_ID", 1)) or 1
+BK_CMDB_RESOURCE_POOL_BIZ_NAME = "资源池"
 
 BKAPP_DEFAULT_SSH_PORT = int(os.getenv("BKAPP_DEFAULT_SSH_PORT", 22))
 
@@ -118,8 +119,21 @@ SUPERVISOR_SOCK = "unix:///var/run/bknodeman/nodeman-supervisord.sock"
 # 自监控rabbitmq队列最大长度配置
 RABBITMQ_MAX_MESSAGE_COUNT = 10000
 
+
+# ===============================================================================
+# Django 基础配置
+# ===============================================================================
+
 # 所有环境的日志级别可以在这里配置
 # LOG_LEVEL = 'INFO'
+
+# 默认DB主键字段
+# https://docs.djangoproject.com/en/3.2/releases/3.2/#customizing-type-of-auto-created-primary-keys
+DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+
+# 请求最大存储占用，默认为 2.5 MB，仅能支持 4k 台主机信息的传入
+# 调整为默认值的4倍，支持 Agent 安装一次性传入 2w 台
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 10
 
 # ===============================================================================
 # 静态资源配置
@@ -188,7 +202,6 @@ if IS_USE_CELERY:
     # celery3 的配置，升级后先行注释，待确认无用后废弃
     # CELERY_TASK_RESULT_EXPIRES = 60 * 30  # 30分钟丢弃结果
 
-
 CELERY_ROUTES = {
     "apps.backend.subscription.tasks.*": {"queue": "backend"},
     "apps.backend.plugin.tasks.*": {"queue": "backend"},
@@ -210,7 +223,6 @@ CONF_PATH = os.path.abspath(__file__)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CONF_PATH))
 PYTHON_BIN = os.path.dirname(sys.executable)
 
-
 BK_PAAS_HOST = os.getenv("BK_PAAS_HOST", "")
 BK_PAAS_INNER_HOST = os.getenv("BK_PAAS_INNER_HOST") or BK_PAAS_HOST
 # ESB、APIGW 的域名，新增于PaaSV3，如果取不到该值，则使用 BK_PAAS_INNER_HOST
@@ -229,10 +241,10 @@ BK_IAM_INNER_HOST = os.getenv("BK_IAM_V3_INNER_HOST", "http://bkiam.service.cons
 BK_IAM_SAAS_HOST = env.BK_IAM_SAAS_HOST
 
 BK_IAM_SYSTEM_ID = os.getenv("BKAPP_IAM_SYSTEM_ID", "bk_nodeman")
+BK_IAM_SYSTEM_NAME = _("节点管理")
 BK_IAM_CMDB_SYSTEM_ID = os.getenv("BKAPP_IAM_CMDB_SYSTEM_ID", "bk_cmdb")
 BK_IAM_MIGRATION_JSON_PATH = os.path.join(PROJECT_ROOT, "support-files/bkiam")
 BK_IAM_RESOURCE_API_HOST = env.BK_IAM_RESOURCE_API_HOST
-
 
 BK_IAM_MIGRATION_APP_NAME = "iam_migrations"
 BK_IAM_SKIP = False
@@ -256,7 +268,6 @@ REST_FRAMEWORK = {
     "SEARCH_PARAM": "keyword",
     "DEFAULT_RENDERER_CLASSES": ("apps.utils.drf.GeneralJSONRenderer",),
 }
-
 
 # ==============================================================================
 # 国际化相关配置
@@ -569,14 +580,6 @@ if BK_BACKEND_CONFIG:
     }
     REDBEAT_KEY_PREFIX = "nodeman"
 
-    # 使用标准运维开通策略相关变量
-    BKAPP_REQUEST_EE_SOPS_APP_CODE = os.getenv("BKAPP_REQUEST_EE_SOPS_APP_CODE")
-    BKAPP_REQUEST_EE_SOPS_APP_SECRET = os.getenv("BKAPP_REQUEST_EE_SOPS_APP_SECRET")
-    BKAPP_EE_SOPS_API_HOST = os.getenv("BKAPP_EE_SOPS_API_HOST")
-    BKAPP_REQUEST_EE_SOPS_OPERATOR = os.getenv("BKAPP_REQUEST_EE_SOPS_OPERATOR", "admin")
-    BKAPP_EE_SOPS_TEMPLATE_ID = os.getenv("BKAPP_EE_SOPS_TEMPLATE_ID")
-    BKAPP_REQUEST_EE_SOPS_BK_BIZ_ID = os.getenv("BKAPP_REQUEST_EE_SOPS_BK_BIZ_ID")
-
     # 后台不基于PaaS部署的情况下，需要重定向日志
     if not BKAPP_IS_PAAS_DEPLOY:
         from blueapps.patch.log import get_paas_v2_logging_config_dict
@@ -606,7 +609,6 @@ LOGGING["handlers"]["iam"] = {
 }
 LOGGING["loggers"]["iam"] = {"handlers": ["iam"], "level": LOGGING["loggers"]["root"]["level"], "propagate": True}
 
-
 # TODO 目前后台使用
 # 节点管理后台 BKAPP_LAN_IP 或 BKAPP_NFS_IP 进行文件分发，是否能统一变量
 BKAPP_LAN_IP = os.getenv("LAN_IP")
@@ -620,6 +622,14 @@ BKAPP_NODEMAN_OUTER_CALLBACK_URL = os.getenv("BKAPP_NODEMAN_OUTER_CALLBACK_URL",
 BK_NODEMAN_API_ADDR = os.getenv("BK_NODEMAN_API_ADDR", "")
 BK_NODEMAN_NGINX_DOWNLOAD_PORT = os.getenv("BK_NODEMAN_NGINX_DOWNLOAD_PORT") or 17980
 BK_NODEMAN_NGINX_PROXY_PASS_PORT = os.getenv("BK_NODEMAN_NGINX_PROXY_PASS_PORT") or 17981
+
+# 使用标准运维开通策略相关变量
+BKAPP_REQUEST_EE_SOPS_APP_CODE = os.getenv("BKAPP_REQUEST_EE_SOPS_APP_CODE")
+BKAPP_REQUEST_EE_SOPS_APP_SECRET = os.getenv("BKAPP_REQUEST_EE_SOPS_APP_SECRET")
+BKAPP_EE_SOPS_API_HOST = os.getenv("BKAPP_EE_SOPS_API_HOST")
+BKAPP_REQUEST_EE_SOPS_OPERATOR = os.getenv("BKAPP_REQUEST_EE_SOPS_OPERATOR", "admin")
+BKAPP_EE_SOPS_TEMPLATE_ID = os.getenv("BKAPP_EE_SOPS_TEMPLATE_ID")
+BKAPP_REQUEST_EE_SOPS_BK_BIZ_ID = os.getenv("BKAPP_REQUEST_EE_SOPS_BK_BIZ_ID")
 
 # agent 安装路径配置
 GSE_AGENT_HOME = os.getenv("BKAPP_GSE_AGENT_HOME") or "/usr/local/gse"
@@ -645,7 +655,6 @@ GSE_ENABLE_SVR_DISCOVERY = get_type_env(key="GSE_ENABLE_SVR_DISCOVERY", default=
 USE_CMDB_SUBSCRIPTION_TRIGGER = get_type_env(key="BKAPP_USE_CMDB_SUBSCRIPTION_TRIGGER", default=True, _type=bool)
 
 VERSION_LOG = {"MD_FILES_DIR": os.path.join(PROJECT_ROOT, "release")}
-
 
 # remove disabled apps
 if locals().get("DISABLED_APPS"):

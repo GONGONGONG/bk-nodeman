@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -299,7 +299,7 @@ class NodeApi:
                         {
                             "status": status,
                             "index": 1,
-                            "node_name": "手动安装" if param["subscription_id"] == 5 else "1",
+                            "node_name": "安装" if param["subscription_id"] == 5 else "1",
                             "pipeline_id": 1,
                         }
                     ]
@@ -309,6 +309,7 @@ class NodeApi:
         result = [
             {
                 "status": status,
+                "record_id": random.randint(1, 100),
                 "instance_id": random.randint(100, 1000),
                 "create_time": "2021-05-17 15:54:13",
                 "start_time": "2021-05-17 15:54:14",
@@ -333,6 +334,7 @@ class NodeApi:
             result.append(
                 {
                     "status": "FAILED",
+                    "record_id": random.randint(1, 100),
                     "instance_id": random.randint(100, 1000),
                     "create_time": "2021-05-17 15:54:13",
                     "start_time": "2021-05-17 15:54:14",
@@ -921,11 +923,7 @@ class MockClient(object):
 
         @classmethod
         def create_cloud_area(cls, *args, **kwargs):
-            if args[0]["bk_cloud_name"][0] == "a":
-                raise ComponentCallError({"code": 1199048})
-            if args[0]["bk_cloud_name"][0] == "b":
-                raise ComponentCallError({"code": 1111111})
-            return {"created": {"id": random.randint(1001, 10000)}}
+            return {"created": {"id": 10000}}
 
         @classmethod
         def update_cloud_area(cls, *args, **kwargs):
@@ -1073,6 +1071,15 @@ class MockClient(object):
             if bk_biz_id == 0:
                 raise ComponentCallError
             return []
+
+        @classmethod
+        def list_service_template(cls, *args, **kwargs):
+            return {"count": 1, "info": [{"id": 1}, {"id": 2}]}
+
+
+class MockPermission(object):
+    def get_apply_data(self, *args, **kwargs):
+        return {}, ""
 
 
 class MockIAM(object):

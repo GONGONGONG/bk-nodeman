@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -16,8 +16,7 @@ from typing import List
 
 from django.utils.translation import ugettext as _
 
-from apps.backend.api.constants import OS
-from apps.backend.components.collections import bulk_job_redis, plugin
+from apps.backend.components.collections import plugin
 from apps.backend.utils.pipeline_parser import PipelineParser as CustomPipelineParser
 from apps.backend.utils.pipeline_parser import parse_pipeline
 from apps.node_man import constants
@@ -29,13 +28,10 @@ logger = logging.getLogger("app")
 class PluginServiceActivity(ServiceActivity):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.component.inputs.subscription_step_id = Var(type=Var.SPLICE, value="${plugin_name}")
+        self.component.inputs.subscription_step_id = Var(type=Var.SPLICE, value="${subscription_step_id}")
         self.component.inputs.description = Var(type=Var.SPLICE, value="${description}")
-        self.component.inputs.act_name = Var(type=Var.SPLICE, value=kwargs.get("name"))
-
-
-class CategoryType(object):
-    official = "official"
-    external = "external"
+        self.component.inputs.act_name = Var(type=Var.PLAIN, value=kwargs.get("name"))
 
 
 class StatusType(object):
@@ -44,11 +40,6 @@ class StatusType(object):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
 
-
-TARGET_PATH_MAP = {
-    OS.LINUX: "/tmp/nodeman_upload/",
-    OS.WINDOWS: "c:\\tmp\\nodeman_upload",
-}
 
 SCRIPT_TIMEOUT = 60 * 5
 
@@ -91,11 +82,6 @@ class PluginManager(object):
 
     def uninstall_package(self):
         act = PluginServiceActivity(component_code=plugin.UnInstallPackageComponent.code, name=_("卸载插件包"))
-        return act
-
-    def bulk_deploy_redis(self):
-        act = PluginServiceActivity(component_code=bulk_job_redis.JobBulkPushFileV2Component.code, name=_("批量下发插件包"))
-
         return act
 
     def reset_retry_times(self):

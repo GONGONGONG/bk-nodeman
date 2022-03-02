@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -60,7 +60,7 @@ def update_proxy_files():
     # 实时查询主机状态
     agent_statuses = client_v2.gse.get_agent_status({"hosts": total_update_hosts})
     for __, host_info in agent_statuses.items():
-        if host_info["bk_agent_alive"] == constants.BkAgentStatus.ALIVE:
+        if host_info["bk_agent_alive"] == constants.BkAgentStatus.ALIVE.value:
             alive_hosts.append({"ip": host_info["ip"], "bk_cloud_id": host_info["bk_cloud_id"]})
     if not alive_hosts:
         return
@@ -146,6 +146,8 @@ print(json.dumps(proxy_md5))
     kwargs = {
         "task_name": "NODE_MAN_PROXY_FILES_CHECK_MD5",
         "bk_biz_id": settings.BLUEKING_BIZ_ID,
+        "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+        "bk_scope_id": settings.BLUEKING_BIZ_ID,
         "script_content": base64.b64encode(script.encode()).decode(),
         "script_timeout": 300,
         "account_alias": constants.LINUX_ACCOUNT,

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -455,7 +455,11 @@ def create_pkg_record(
 
     # 写入插件包信息
     packages_queryset = models.Packages.objects.filter(
-        project=project, version=pkg_parse_info["version"], os=package_os, cpu_arch=cpu_arch
+        project=project,
+        version=pkg_parse_info["version"],
+        os=package_os,
+        cpu_arch=cpu_arch,
+        pkg_name=pkg_parse_info["pkg_name"],
     )
     if not packages_queryset.exists():
         # 如果之前未有未发布的插件包信息，需要新建
@@ -493,6 +497,8 @@ def create_pkg_record(
                     name=config_template_info["name"],
                     version=config_template_info["version"],
                     is_main=config_template_info["is_main"],
+                    cpu_arch=cpu_arch,
+                    os=package_os,
                     defaults=dict(
                         format=config_template_info["format"],
                         file_path=config_template_info["file_path"],
@@ -623,3 +629,11 @@ def create_pkg_record(
     logger.info("clean temp tgz file -> {temp_file_path} done.".format(temp_file_path=package_tmp_path))
 
     return pkg_record
+
+
+def add_default_platform(params: Dict) -> Dict:
+    if "os" not in params:
+        params.update({"os": constants.PluginOsType.linux})
+    if "cpu_arch" not in params:
+        params.update({"cpu_arch": constants.CpuType.x86_64})
+    return params

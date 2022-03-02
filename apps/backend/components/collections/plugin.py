@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -11,12 +11,16 @@ specific language governing permissions and limitations under the License.
 import abc
 import json
 import logging
+import operator
 import os
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Union
+from functools import reduce
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from django.conf import settings
 from django.db import IntegrityError
+from django.db.models import F, Q
+from django.utils import timezone
 from django.utils.translation import ugettext as _
 
 from apps.backend.api.constants import (
@@ -28,14 +32,14 @@ from apps.backend.api.constants import (
 from apps.backend.api.job import process_parms
 from apps.backend.components.collections.base import BaseService, CommonData
 from apps.backend.components.collections.job import JobV3BaseService
-from apps.backend.subscription.errors import PackageNotExists, PluginValidationError
+from apps.backend.subscription import errors
 from apps.backend.subscription.steps.adapter import PolicyStepAdapter
 from apps.backend.subscription.tools import (
     create_group_id,
     get_all_subscription_steps_context,
     render_config_files_by_config_templates,
 )
-from apps.exceptions import AppBaseException
+from apps.exceptions import AppBaseException, ComponentCallError
 from apps.node_man import constants, exceptions, models
 from apps.node_man.handlers.cmdb import CmdbHandler
 from apps.utils.batch_request import request_multi_thread
@@ -50,13 +54,128 @@ logger = logging.getLogger("app")
 SCRIPT_CONTENT_CACHE = {}
 
 
+class PluginCommonData(CommonData):
+    def __init__(
+        self,
+        bk_host_ids: Set[int],
+        host_id_obj_map: Dict[int, models.Host],
+        ap_id_obj_map: Dict[int, models.AccessPoint],
+        subscription: models.Subscription,
+        subscription_instances: List[models.SubscriptionInstanceRecord],
+        subscription_instance_ids: Set[int],
+        sub_inst_id__host_id_map: Dict[int, int],
+        # 插件新增的公共数据
+        process_statuses: List[models.ProcessStatus],
+        target_host_objs: Optional[List[models.Host]],
+        policy_step_adapter: PolicyStepAdapter,
+        group_id_instance_map: Dict[str, models.SubscriptionInstanceRecord],
+    ):
+        # 进程状态列表
+        self.process_statuses = process_statuses
+        # 目标主机列表，用于远程采集场景
+        self.target_host_objs = target_host_objs
+        # PluginStep 适配器，用于屏蔽不同类型的插件操作类订阅差异
+        self.policy_step_adapter: PolicyStepAdapter = policy_step_adapter
+        # group_id - 订阅实例记录映射关系
+        self.group_id_instance_map = group_id_instance_map
+        # 插件名称
+        self.plugin_name = policy_step_adapter.plugin_name
+
+        super().__init__(
+            bk_host_ids=bk_host_ids,
+            host_id_obj_map=host_id_obj_map,
+            ap_id_obj_map=ap_id_obj_map,
+            subscription=subscription,
+            subscription_instances=subscription_instances,
+            subscription_instance_ids=subscription_instance_ids,
+            sub_inst_id__host_id_map=sub_inst_id__host_id_map,
+        )
+
+
 class PluginBaseService(BaseService, metaclass=abc.ABCMeta):
     """
     插件原子基类，提供一些常用的数据获取方法
     """
 
+    @classmethod
+    def get_common_data(cls, data):
+        """
+        初始化常用数据，注意这些数据不能放在 self 属性里，否则会产生较大的 process snap shot，
+        另外也尽量不要在 schedule 中使用，否则多次回调可能引起性能问题
+        """
+
+        common_data = super().get_common_data(data)
+        subscription_instances = common_data.subscription_instances
+        # 同一批执行的任务都源于同一个订阅任务
+        subscription = common_data.subscription
+
+        subscription_step_id = data.get_one_of_inputs("subscription_step_id")
+        try:
+            subscription_step = models.SubscriptionStep.objects.get(id=subscription_step_id)
+        except models.SubscriptionStep.DoesNotExist:
+            raise errors.SubscriptionStepNotExist({"step_id": subscription_step_id})
+
+        group_id_instance_map: Dict[str, models.SubscriptionInstanceRecord] = {}
+        for subscription_instance in subscription_instances:
+            group_id = create_group_id(subscription, subscription_instance.instance_info)
+            group_id_instance_map[group_id] = subscription_instance
+
+        target_host_objs = None
+        if subscription.target_hosts:
+            # 目标主机，用于远程采集场景
+            query_conditions = reduce(
+                operator.or_,
+                [
+                    Q(inner_ip=target_host["ip"], bk_cloud_id=target_host["bk_cloud_id"])
+                    for target_host in subscription.target_hosts
+                ],
+            )
+            target_host_objs = models.Host.objects.filter(query_conditions)
+
+        policy_step_adapter = PolicyStepAdapter(subscription_step)
+
+        process_statuses = models.ProcessStatus.objects.filter(
+            name=policy_step_adapter.plugin_name, group_id__in=group_id_instance_map.keys()
+        )
+        return PluginCommonData(
+            bk_host_ids=common_data.bk_host_ids,
+            host_id_obj_map=common_data.host_id_obj_map,
+            ap_id_obj_map=common_data.ap_id_obj_map,
+            subscription=common_data.subscription,
+            subscription_instances=common_data.subscription_instances,
+            subscription_instance_ids=common_data.subscription_instance_ids,
+            sub_inst_id__host_id_map=common_data.sub_inst_id__host_id_map,
+            # Plugin 新增的公共数据
+            process_statuses=process_statuses,
+            target_host_objs=target_host_objs,
+            policy_step_adapter=policy_step_adapter,
+            group_id_instance_map=group_id_instance_map,
+        )
+
+    def sub_inst_failed_handler(self, sub_inst_ids: Union[List[int], Set[int]]):
+        """
+        订阅实例失败处理器，主要用于记录日志并把自增重试次数
+        :param sub_inst_ids: 订阅实例ID列表/集合
+        """
+        instance_record_objs = list(models.SubscriptionInstanceRecord.objects.filter(id__in=sub_inst_ids))
+        # 同一批实例来自同一订阅
+        subscription = models.Subscription.get_subscription(instance_record_objs[0].subscription_id, show_deleted=True)
+        group_ids = [
+            create_group_id(subscription, inst_record_obj.instance_info) for inst_record_obj in instance_record_objs
+        ]
+        models.ProcessStatus.objects.filter(source_id=subscription.id, group_id__in=group_ids).update(
+            retry_times=F("retry_times") + 1
+        )
+
+        base_log = _("插件部署失败，重试次数 +1")
+        logger.info(
+            f"subscription_id -> [{subscription.id}], subscription_instance_ids -> {sub_inst_ids}, "
+            f"act_id -> {self.id}: {base_log}"
+        )
+        self.log_warning(sub_inst_ids=sub_inst_ids, log_content=base_log)
+
     @staticmethod
-    def get_host_by_process_status(process_status: models.ProcessStatus, common_data: CommonData) -> models.Host:
+    def get_host_by_process_status(process_status: models.ProcessStatus, common_data: PluginCommonData) -> models.Host:
         """通过进程状态查询得到主机对象"""
         host_id_obj_map = common_data.host_id_obj_map
         bk_host_id = process_status.bk_host_id
@@ -65,7 +184,9 @@ class PluginBaseService(BaseService, metaclass=abc.ABCMeta):
             raise exceptions.HostNotExists()
         return host
 
-    def get_agent_config_by_process_status(self, process_status: models.ProcessStatus, common_data: CommonData) -> Dict:
+    def get_agent_config_by_process_status(
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
+    ) -> Dict:
         """通过进程状态查询得到主机的接入点配置"""
         ap_id_obj_map = common_data.ap_id_obj_map
         host = self.get_host_by_process_status(process_status, common_data)
@@ -76,7 +197,7 @@ class PluginBaseService(BaseService, metaclass=abc.ABCMeta):
         return agent_config
 
     def get_package_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> models.Packages:
         """通过进程状态得到插件包对象"""
         host = self.get_host_by_process_status(process_status, common_data)
@@ -84,7 +205,9 @@ class PluginBaseService(BaseService, metaclass=abc.ABCMeta):
         package = policy_step_adapter.get_matching_package_obj(host.os_type, host.cpu_arch)
         return package
 
-    def get_plugin_root_by_process_status(self, process_status: models.ProcessStatus, common_data: CommonData) -> str:
+    def get_plugin_root_by_process_status(
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
+    ) -> str:
         """
         通过进程状态得到插件根路径，目前分为两类，
         1. 官方插件通常为 /usr/local/gse/plugins/
@@ -103,7 +226,7 @@ class PluginBaseService(BaseService, metaclass=abc.ABCMeta):
 class InitProcessStatusService(PluginBaseService):
     """初始化进程状态，持久化记录并用于后续流程使用"""
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         action = data.get_one_of_inputs("action")
         bk_host_ids = common_data.bk_host_ids
         subscription = common_data.subscription
@@ -182,13 +305,11 @@ class InitProcessStatusService(PluginBaseService):
                         to_be_created_process_status,
                     )
 
-        # 批量创建或更新进程状态表，受限于部分MySQL配置的原因，这里 BATCH_SIZE 支持可配置，默认为100
-        batch_size = models.GlobalSettings.get_config("BATCH_SIZE", default=100)
-        models.ProcessStatus.objects.bulk_create(to_be_created_process_status, batch_size=batch_size)
+        models.ProcessStatus.objects.bulk_create(to_be_created_process_status, batch_size=self.batch_size)
         models.ProcessStatus.objects.bulk_update(
             to_be_updated_process_status,
             fields=["setup_path", "log_path", "data_path", "pid_path", "version"],
-            batch_size=batch_size,
+            batch_size=self.batch_size,
         )
 
     def inputs_format(self):
@@ -206,10 +327,10 @@ class InitProcessStatusService(PluginBaseService):
         """获取插件包对象"""
         try:
             return policy_step_adapter.get_matching_package_obj(os_type, cpu_arch)
-        except PackageNotExists as error:
+        except errors.PackageNotExists as error:
             # 插件包不支持或不存在时，记录异常信息，此实例不参与后续流程
             self.move_insts_to_failed([subscription_instance.id], str(error))
-        except PluginValidationError as error:
+        except errors.PluginValidationError as error:
             # 插件包不支持或不存在时，记录异常信息，此实例不参与后续流程
             self.move_insts_to_failed([subscription_instance.id], str(error))
 
@@ -309,7 +430,7 @@ class UpdateHostProcessStatusService(PluginBaseService):
     更新主机进程状态
     """
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         status = data.get_one_of_inputs("status")
         plugin_name = common_data.plugin_name
         subscription = common_data.subscription
@@ -353,7 +474,7 @@ class UpdateHostProcessStatusService(PluginBaseService):
 class CheckAgentStatusService(PluginBaseService):
     """查询AGENT状态是否正常"""
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         process_statuses = common_data.process_statuses
         group_id_instance_map = common_data.group_id_instance_map
         target_host_objs = common_data.target_host_objs
@@ -382,7 +503,7 @@ class CheckAgentStatusService(PluginBaseService):
 class TransferPackageService(JobV3BaseService, PluginBaseService):
     """调用作业平台传输插件包"""
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         process_statuses = common_data.process_statuses
         group_id_instance_map = common_data.group_id_instance_map
         host_id_obj_map = common_data.host_id_obj_map
@@ -461,20 +582,20 @@ class PluginExecuteScriptService(PluginBaseService, JobV3BaseService, metaclass=
         raise NotImplementedError
 
     def generate_script_params_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> str:
         """
         生成脚本所需的参数，默认脚本无需参数，由子类继承编写参数生成逻辑
         """
         return ""
 
-    def need_skipped(self, process_status: models.ProcessStatus, common_data: CommonData) -> bool:
+    def need_skipped(self, process_status: models.ProcessStatus, common_data: PluginCommonData) -> bool:
         """
         判断是否需要跳过，由子类继承并编写跳过规则，默认不跳过
         """
         return False
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         process_statuses = common_data.process_statuses
         timeout = data.get_one_of_inputs("timeout")
         group_id_instance_map = common_data.group_id_instance_map
@@ -540,13 +661,6 @@ class PluginExecuteScriptService(PluginBaseService, JobV3BaseService, metaclass=
                 SCRIPT_CONTENT_CACHE[file_name] = fh.read()
         return SCRIPT_CONTENT_CACHE[file_name]
 
-    def run_job_or_finish_schedule(self, multi_job_params_map: Dict):
-        """如果作业平台参数为空，代表无需执行，直接finish_schedule去执行下一个原子"""
-        if multi_job_params_map:
-            request_multi_thread(self.request_single_job_and_create_map, multi_job_params_map.values())
-        else:
-            self.finish_schedule()
-
 
 class InstallPackageService(PluginExecuteScriptService):
     """调用作业平台安装插件包"""
@@ -556,7 +670,7 @@ class InstallPackageService(PluginExecuteScriptService):
         return "update_binary"
 
     def generate_script_params_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> str:
         agent_config = self.get_agent_config_by_process_status(process_status, common_data)
         package = self.get_package_by_process_status(process_status, common_data)
@@ -616,7 +730,7 @@ class RemoveConfigService(PluginExecuteScriptService):
         return "remove_config"
 
     def generate_script_params_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> str:
         host = self.get_host_by_process_status(process_status, common_data)
         # 配置插件进程实际运行路径配置信息
@@ -642,7 +756,7 @@ class JobAllocatePortService(PluginExecuteScriptService):
     def script_name(self):
         return "fetch_used_ports"
 
-    def need_skipped(self, process_status: models.ProcessStatus, common_data: CommonData) -> bool:
+    def need_skipped(self, process_status: models.ProcessStatus, common_data: PluginCommonData) -> bool:
         """
         当满足以下条件之一时，无需重复执行分配端口号逻辑，直接跳过即可
         1. 该进程已分配端口号
@@ -692,6 +806,8 @@ class JobAllocatePortService(PluginExecuteScriptService):
         result = JobApi.get_job_instance_ip_log(
             {
                 "bk_biz_id": settings.BLUEKING_BIZ_ID,
+                "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+                "bk_scope_id": settings.BLUEKING_BIZ_ID,
                 "job_instance_id": job_instance_id,
                 "step_instance_id": step_instance_id,
                 "bk_cloud_id": host.bk_cloud_id,
@@ -723,7 +839,7 @@ class JobAllocatePortService(PluginExecuteScriptService):
             [subscription_instance.id], _("主机[{}]在ip->[{}]上无可用端口").format(host.inner_ip, listen_ip)
         )
 
-    def get_job_instance_status(self, job_sub_map: models.JobSubscriptionInstanceMap, common_data: CommonData):
+    def get_job_instance_status(self, job_sub_map: models.JobSubscriptionInstanceMap, common_data: PluginCommonData):
         """查询作业平台执行状态"""
         bk_host_ids = common_data.bk_host_ids
         process_statuses = common_data.process_statuses
@@ -733,6 +849,8 @@ class JobAllocatePortService(PluginExecuteScriptService):
         result = JobApi.get_job_instance_status(
             {
                 "bk_biz_id": settings.BLUEKING_BIZ_ID,
+                "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+                "bk_scope_id": settings.BLUEKING_BIZ_ID,
                 "job_instance_id": job_sub_map.job_instance_id,
                 "return_ip_result": True,
             }
@@ -789,7 +907,7 @@ class RenderAndPushConfigService(PluginBaseService, JobV3BaseService):
     渲染配置文件并调用作业平台进行下发
     """
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         subscription_step_id = data.get_one_of_inputs("subscription_step_id")
         process_statuses = common_data.process_statuses
         policy_step_adapter = common_data.policy_step_adapter
@@ -924,6 +1042,56 @@ class GseOperateProcService(PluginBaseService):
             }
         return gse_control
 
+    @staticmethod
+    def get_resource_policy(bk_host_ids: Set[int], plugin_name: str) -> Dict[int, Dict]:
+        """查询资源策略"""
+        # 给每台主机设置默认资源配置
+        host_id__resource_policy_map = {
+            bk_host_id: {
+                "updated_at": timezone.datetime(1970, 1, 1, tzinfo=timezone.get_current_timezone()),
+                "resource": {"cpu": constants.PLUGIN_DEFAULT_CPU_LIMIT, "mem": constants.PLUGIN_DEFAULT_MEM_LIMIT},
+            }
+            for bk_host_id in bk_host_ids
+        }
+        # 查询主机对应的服务模板ID列表
+        try:
+            host_service_templates = CmdbHandler.find_host_service_template(list(bk_host_ids))
+        except ComponentCallError as error:
+            # 接口不存在时，使用默认配置
+            logger.exception(
+                "call find_host_service_template error: {error}," " use default resource policy".format(error=error)
+            )
+            return host_id__resource_policy_map
+
+        all_service_template = []
+        for service_template in host_service_templates:
+            all_service_template.extend(service_template["service_template_id"])
+        # 查询服务模板已设置的资源策略
+        resource_policies = models.PluginResourcePolicy.objects.filter(
+            plugin_name=plugin_name,
+            bk_obj_id=constants.CmdbObjectId.SERVICE_TEMPLATE,
+            bk_inst_id__in=all_service_template,
+        )
+        service_template_id__resource_policy_map = {
+            policy.bk_inst_id: {
+                "updated_at": policy.updated_at or policy.created_at,
+                "resource": {"cpu": policy.cpu, "mem": policy.mem},
+            }
+            for policy in resource_policies
+        }
+        # 匹配资源策略到主机上，若同一主机属于多个服务模板，则取最近更新的策略为准
+        for service_template in host_service_templates:
+            bk_host_id = service_template["bk_host_id"]
+            for service_template_id in service_template["service_template_id"]:
+                policy = service_template_id__resource_policy_map.get(service_template_id)
+                # 服务模板未配置策略，则使用默认值
+                if not policy:
+                    continue
+                if policy["updated_at"] > host_id__resource_policy_map[bk_host_id]["updated_at"]:
+                    host_id__resource_policy_map[bk_host_id] = policy
+
+        return host_id__resource_policy_map
+
     def request_gse_or_finish_schedule(self, proc_operate_req: List, data):
         """批量请求GSE接口"""
         # 当请求参数为空时，代表无需请求，直接 finish_schedule 跳过即可
@@ -934,7 +1102,7 @@ class GseOperateProcService(PluginBaseService):
         else:
             self.finish_schedule()
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         op_type = data.get_one_of_inputs("op_type")
         policy_step_adapter = common_data.policy_step_adapter
         process_statuses = common_data.process_statuses
@@ -942,6 +1110,7 @@ class GseOperateProcService(PluginBaseService):
         group_id_instance_map = common_data.group_id_instance_map
         host_id_obj_map = common_data.host_id_obj_map
 
+        host_id__resource_policy_map = self.get_resource_policy(common_data.bk_host_ids, plugin.name)
         proc_operate_req = []
         for process_status in process_statuses:
             bk_host_id = process_status.bk_host_id
@@ -975,11 +1144,7 @@ class GseOperateProcService(PluginBaseService):
                         "user": constants.ACCOUNT_MAP.get(host.os_type, "root"),
                     },
                     "control": gse_control,
-                    "resource": {
-                        "mem": 10,
-                        # 日志采集器需要更高的CPU，TODO 后续通过资源配额来解决
-                        "cpu": 30 if plugin.name == "bkunifylogbeat" else 10,
-                    },
+                    "resource": host_id__resource_policy_map[bk_host_id]["resource"],
                     "alive_monitor_policy": {
                         # 托管类型，0为周期执行进程，1为常驻进程，2为单次执行进程，这里仅需使用常驻进程
                         "auto_type": 1,
@@ -1014,11 +1179,11 @@ class GseOperateProcService(PluginBaseService):
         :return:
         """
         success_conditions = (
-            # 停止插件时，若插件本身未运行，也认为是成功
+            # 停止插件时，若插件本身未运行，也认为是成功的
             op_type == constants.GseOpType.STOP
-            and error_code == GseDataErrCode.NON_EXIST
+            and error_code == GseDataErrCode.PROC_NO_RUNNING
         ) or (
-            # 启动插件时，若插件本身已运行，也认为是成功
+            # 启动插件时，若插件本身已运行，也认为是成功的
             op_type == constants.GseOpType.START
             and error_code == GseDataErrCode.PROC_RUNNING
         )
@@ -1098,7 +1263,7 @@ class ResetRetryTimesService(PluginBaseService):
             Service.InputItem(name="host_status_id", key="host_status_id", type="int", required=True),
         ]
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         plugin_name = data.get_one_of_inputs("plugin_name")
         group_id_instance_map = common_data.group_id_instance_map
         models.ProcessStatus.objects.filter(name=plugin_name, group_id__in=group_id_instance_map.keys()).update(
@@ -1119,7 +1284,7 @@ class DebugService(PluginExecuteScriptService):
         return "operate_plugin"
 
     def generate_script_params_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> str:
         policy_step_adapter = common_data.policy_step_adapter
         package = self.get_package_by_process_status(process_status, common_data)
@@ -1139,7 +1304,13 @@ class DebugService(PluginExecuteScriptService):
         job_instance_id = job_sub_inst_map.job_instance_id
 
         result = JobApi.get_job_instance_status(
-            {"bk_biz_id": settings.BLUEKING_BIZ_ID, "job_instance_id": job_instance_id, "return_ip_result": True}
+            {
+                "bk_biz_id": settings.BLUEKING_BIZ_ID,
+                "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+                "bk_scope_id": settings.BLUEKING_BIZ_ID,
+                "job_instance_id": job_instance_id,
+                "return_ip_result": True,
+            }
         )
         # 调试插件时仅有一个IP，以下取值方式与作业平台API文档一致，不会抛出 IndexError/KeyError 的异常
         step_instance_id = result["step_instance_list"][0]["step_instance_id"]
@@ -1149,6 +1320,8 @@ class DebugService(PluginExecuteScriptService):
         params = {
             "job_instance_id": job_instance_id,
             "bk_biz_id": settings.BLUEKING_BIZ_ID,
+            "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+            "bk_scope_id": settings.BLUEKING_BIZ_ID,
             "bk_username": settings.BACKEND_JOB_OPERATOR,
             "step_instance_id": step_instance_id,
             "ip": ip,
@@ -1181,7 +1354,7 @@ class StopDebugService(PluginExecuteScriptService):
         return "stop_debug"
 
     def generate_script_params_by_process_status(
-        self, process_status: models.ProcessStatus, common_data: CommonData
+        self, process_status: models.ProcessStatus, common_data: PluginCommonData
     ) -> str:
         policy_step_adapter = common_data.policy_step_adapter
         package = self.get_package_by_process_status(process_status, common_data)
@@ -1193,7 +1366,7 @@ class StopDebugService(PluginExecuteScriptService):
 
 
 class DeleteSubscriptionService(PluginBaseService):
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         subscription = common_data.subscription
         subscription_instance_ids = common_data.subscription_instance_ids
 
@@ -1242,7 +1415,7 @@ class SwitchSubscriptionEnableService(PluginBaseService):
             Service.InputItem(name="enable", key="enable", type="bool", required=True),
         ]
 
-    def _execute(self, data, parent_data, common_data: CommonData):
+    def _execute(self, data, parent_data, common_data: PluginCommonData):
         enable = data.get_one_of_inputs("enable")
         subscription = common_data.subscription
 

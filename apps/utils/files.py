@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -139,8 +139,7 @@ class PathHandler:
     path_handler: [ntpath, posixpath]
 
     def __init__(self, os_type: str):
-        self.os_type = os_type.lower()
-        if os_type == constants.OsType.WINDOWS:
+        if os_type.lower() == constants.OsType.WINDOWS.lower():
             self.path_handler = ntpath
         else:
             self.path_handler = posixpath
@@ -165,9 +164,7 @@ def fetch_file_paths_from_dir(
     :return: 文件路径列表
     """
     if not os.path.isdir(dir_path):
-        raise NotADirectoryError(f"{dir_path} is not a directory.")
-    if not os.path.exists(dir_path):
-        raise FileNotFoundError(f"{dir_path} doesn't exist.")
+        raise NotADirectoryError(f"{dir_path} is not a directory or doesn't exist.")
 
     file_paths = []
     ignored_dir_paths = set()

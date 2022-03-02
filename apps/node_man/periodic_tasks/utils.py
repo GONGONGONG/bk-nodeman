@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -17,6 +17,7 @@ from django.conf import settings
 
 from apps.backend.api.constants import POLLING_INTERVAL, POLLING_TIMEOUT, JobIPStatus
 from apps.backend.api.errors import JobPollTimeout
+from apps.node_man import constants
 from common.api import JobApi
 
 logger = logging.getLogger("app")
@@ -69,6 +70,8 @@ class JobDemand(object):
         params = {
             "job_instance_id": job_instance_id,
             "bk_biz_id": settings.BLUEKING_BIZ_ID,
+            "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+            "bk_scope_id": settings.BLUEKING_BIZ_ID,
             "bk_username": settings.BACKEND_JOB_OPERATOR,
             "return_ip_result": True,
         }
@@ -105,6 +108,8 @@ class JobDemand(object):
                 log_params = {
                     "job_instance_id": job_instance_id,
                     "bk_biz_id": settings.BLUEKING_BIZ_ID,
+                    "bk_scope_type": constants.BkJobScopeType.BIZ_SET.value,
+                    "bk_scope_id": settings.BLUEKING_BIZ_ID,
                     "bk_username": settings.BACKEND_JOB_OPERATOR,
                     "step_instance_id": step_instance_id,
                     "ip": host["ip"],

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -13,7 +13,6 @@ from typing import Any, Dict
 
 from django.db.models import Q
 
-from apps.backend.tests.components.collections.agent.utils import DEFAULT_CLOUD_NAME
 from apps.node_man import constants as const
 from apps.node_man import tools
 from apps.node_man.constants import IamActionType
@@ -232,7 +231,7 @@ class PluginHandler(APIModel):
         cloud_name = dict(
             Cloud.objects.filter(bk_cloud_id__in=bk_cloud_ids).values_list("bk_cloud_id", "bk_cloud_name")
         )
-        cloud_name[0] = DEFAULT_CLOUD_NAME
+        cloud_name[0] = const.DEFAULT_CLOUD_NAME
 
         # 获得 Job Result 数据
         job_status = JobTask.objects.filter(bk_host_id__in=bk_host_ids).values(
@@ -297,12 +296,11 @@ class PluginHandler(APIModel):
         return result
 
     @staticmethod
-    def operate(params: dict, username: str, is_superuser: bool):
+    def operate(params: dict, username: str):
         """
         用于只有bk_host_id参数的插件操作
         :param params: 任务类型及host_id
         :param username: 用户名
-        :param is_superuser: 是否为超级用户
         """
 
         # 用户有权限获取的业务
@@ -326,7 +324,7 @@ class PluginHandler(APIModel):
             ).values("bk_host_id", "bk_biz_id", "bk_cloud_id", "inner_ip", "node_type", "os_type")
 
         # 校验器进行校验
-        db_host_ids, host_biz_scope = operate_validator(list(db_host_sql), user_biz, username, {}, is_superuser)
+        db_host_ids, host_biz_scope = operate_validator(list(db_host_sql))
 
         jobs_to_be_created = []
         subscription_id__plugin_name_map = {}

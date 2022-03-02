@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -842,9 +842,6 @@ class BasePluginAction(six.with_metaclass(abc.ABCMeta, Action)):
     # 操作类型
     OP_TYPE = None
 
-    # 执行成功后的步骤状态
-    SUCCESS_STATE_TYPE = None
-
     # 动作描述
     ACTION_DESCRIPTION = ""
 
@@ -867,8 +864,15 @@ class BasePluginAction(six.with_metaclass(abc.ABCMeta, Action)):
         subscription_instance_ids = [sub_inst.id for sub_inst in subscription_instances]
         return PluginManager(subscription_instance_ids, self.step)
 
+    def inject_vars_to_global_data(self, global_pipeline_data: Data):
+        global_pipeline_data.inputs["${plugin_name}"] = Var(type=Var.PLAIN, value=self.step.plugin_name)
+        super().inject_vars_to_global_data(global_pipeline_data)
+
     def generate_activities(
-        self, subscription_instances: List[models.SubscriptionInstanceRecord], current_activities=None
+        self,
+        subscription_instances: List[models.SubscriptionInstanceRecord],
+        global_pipeline_data: Data,
+        current_activities=None,
     ) -> Tuple[List[PluginServiceActivity], Data]:
         plugin_manager = self.get_plugin_manager(subscription_instances)
         activities = []
@@ -888,6 +892,7 @@ class BasePluginAction(six.with_metaclass(abc.ABCMeta, Action)):
             activities.append(plugin_manager.reset_retry_times())
 
         # 注入公共参数
+        self.inject_vars_to_global_data(global_pipeline_data)
         for act in activities:
             act.component.inputs.plugin_name = Var(type=Var.PLAIN, value=self.step.plugin_name)
             act.component.inputs.subscription_step_id = Var(type=Var.PLAIN, value=self.step.subscription_step.id)
@@ -903,8 +908,7 @@ class BasePluginAction(six.with_metaclass(abc.ABCMeta, Action)):
 
 
 class MainPluginAction(BasePluginAction, ABC):
-    def _update_or_create_process_status(self, bk_host_id, group_id, rewrite_path_info):
-        return Action._update_or_create_process_status(self, bk_host_id, group_id, rewrite_path_info)
+    pass
 
 
 class PluginAction(six.with_metaclass(abc.ABCMeta, BasePluginAction)):

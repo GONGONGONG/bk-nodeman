@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -160,10 +160,14 @@ class SubscriptionViewSet(APIViewSet):
                             {
                                 "name": "config.yaml",
                                 "version": "2",
+                                "os": "windows",
+                                "cpu_arch": "x86_64",
                             },
                             {
                                 "name": "env.yaml",
                                 "version": "2",
+                                "os": "windows",
+                                "cpu_arch": "x86_64",
                             }
                         ]
                     },
@@ -810,7 +814,12 @@ class SubscriptionViewSet(APIViewSet):
 
         params = self.get_validated_data()
         host = models.Host.objects.get(bk_host_id=params["bk_host_id"])
-        installation_tool = gen_commands(host, params["host_install_pipeline_id"], params["is_uninstall"])
+        installation_tool = gen_commands(
+            host=host,
+            pipeline_id=params["host_install_pipeline_id"],
+            is_uninstall=params["is_uninstall"],
+            sub_inst_id=params["sub_inst_id"],
+        )
 
         return Response(
             {

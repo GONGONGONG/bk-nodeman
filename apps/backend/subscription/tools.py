@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -237,7 +237,7 @@ def create_host_key(data: Dict) -> str:
     return "{}-{}-{}".format(data.get("bk_host_innerip") or data.get("ip"), bk_cloud_id, constants.DEFAULT_SUPPLIER_ID)
 
 
-def find_host_biz_relations(bk_host_ids: List[int]) -> Dict:
+def find_host_biz_relations(bk_host_ids: List[int]) -> List[Dict]:
     """
     查询主机所属拓扑关系
     :param bk_host_ids: 主机ID列表 [1, 2, 3]
@@ -252,6 +252,10 @@ def find_host_biz_relations(bk_host_ids: List[int]) -> Dict:
         }
     ]
     """
+    # 查询条件为空提前返回
+    if not bk_host_ids:
+        return []
+
     # CMDB 限制了单次查询数量，这里需分批并发请求查询
     param_list = [
         {"bk_host_id": bk_host_ids[count * constants.QUERY_CMDB_LIMIT : (count + 1) * constants.QUERY_CMDB_LIMIT]}
@@ -389,6 +393,12 @@ def get_host_detail_by_template(bk_obj_id, template_info_list: list, bk_biz_id: 
         host_info_result = batch_request(
             call_func, dict(bk_set_template_ids=template_ids, bk_biz_id=bk_biz_id, fields=fields)
         )
+    biz_info = fetch_biz_info({"condition": {"bk_biz_id": bk_biz_id}})
+    cloud_id_name_map = models.Cloud.cloud_id_name_map()
+    for host in host_info_result:
+        host["bk_biz_id"] = bk_biz_id
+        host["bk_biz_name"] = host["bk_biz_name"] = biz_info[bk_biz_id]["bk_biz_name"]
+        host["bk_cloud_name"] = cloud_id_name_map.get(host["bk_cloud_id"])
 
     return host_info_result
 

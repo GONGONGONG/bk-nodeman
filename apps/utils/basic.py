@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -61,8 +61,8 @@ def filter_values(data: Dict, filter_empty=False) -> Dict:
     return ret
 
 
-def suffix_slash(os, path):
-    if os.lower() == "windows":
+def suffix_slash(os, path) -> str:
+    if os.lower() in ["windows", "WINDOWS"]:
         if not path.endswith("\\"):
             path = path + "\\"
     else:
@@ -137,7 +137,7 @@ def to_int_or_default(val: Any, default: Any = None) -> Union[int, Any, None]:
 
 def remove_keys_from_dict(
     origin_data: Union[Dict, List], keys: Iterable[Any], return_deep_copy: bool = True, recursive: bool = False
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """
     从字典或列表结构中，移除结构中存在的字典所指定的key
     :param origin_data: 原始数据

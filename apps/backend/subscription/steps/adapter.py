@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-节点管理(BlueKing-BK-NODEMAN) available.
-Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+Copyright (C) 2017-2022 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 You may obtain a copy of the License at https://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -25,6 +25,8 @@ class ConfigTemplateSerializer(serializers.Serializer):
     name = serializers.CharField(required=True, label="配置文件名")
     version = serializers.CharField(required=True, label="配置文件版本号")
     is_main = serializers.BooleanField(default=False, label="是否主配置")
+    os = serializers.CharField(required=False, label="操作系统")
+    cpu_arch = serializers.CharField(required=False, label="CPU类型")
 
 
 class PluginStepConfigSerializer(serializers.Serializer):
@@ -232,6 +234,8 @@ class PolicyStepAdapter:
                     models.PluginConfigTemplate.objects.filter(
                         plugin_version__in=[plugin_version, "*"],
                         name=template["name"],
+                        os=template.get("os", constants.OsType.LINUX.lower()),
+                        cpu_arch=template.get("cpu_arch", constants.CpuType.x86_64),
                         plugin_name=plugin_name,
                         is_main=is_main_template,
                     )
@@ -243,6 +247,8 @@ class PolicyStepAdapter:
                     models.PluginConfigTemplate.objects.filter(
                         plugin_version__in=[packages[0].version, "*"],
                         name=template["name"],
+                        os=template.get("os", constants.OsType.LINUX.lower()),
+                        cpu_arch=template.get("cpu_arch", constants.CpuType.x86_64),
                         plugin_name=plugin_name,
                         is_main=is_main_template,
                     )
@@ -254,13 +260,20 @@ class PolicyStepAdapter:
                     # 不校验主配置模板是否存在是为了兼容老版本插件没有主配置模板
                     continue
                 raise errors.PluginValidationError(
-                    msg=_("配置模板 [{name}-{version}] 不存在").format(name=template["name"], version=template["version"])
+                    msg=_("配置模板 [{name}-{version}-{os}-{cpu_arch}] 不存在").format(
+                        name=template["name"],
+                        version=template["version"],
+                        os=template.get("os", constants.OsType.LINUX.lower()),
+                        cpu_arch=template.get("cpu_arch", constants.CpuType.x86_64),
+                    )
                 )
             config_templates.append(
                 {
                     "id": config_template.id,
                     "version": config_template.version,
                     "name": config_template.name,
+                    "os": config_template.os,
+                    "cpu_arch": config_template.cpu_arch,
                     "is_main": config_template.is_main,
                 }
             )
