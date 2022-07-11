@@ -7,28 +7,39 @@
       {{ `${ index + 1 }. ${ item }` }}
     </p>
     <div class="cloud-panel" v-if="cloudAreaList.length">
-      <RightPanel
-        v-for="cloudArea in cloudAreaList"
-        :key="`${cloudArea.bk_cloud_id}_${cloudArea.ap_id}`"
-        :class="['cloud-panel-item', { 'is-close': !cloudArea.collapse }]"
-        :need-border="false"
-        :icon-style="{ padding: '4px 4px', fontSize: '12px' }"
-        collapse-color="#979BA5"
-        title-bg-color="#F0F1F5"
-        :collapse="cloudArea.collapse"
-        :type="`${cloudArea.bk_cloud_id}_${cloudArea.ap_id}`"
-        @change="handleToggle">
-        <div class="collapse-header" slot="title">
-          {{ `${ cloudArea.bk_cloud_name } - ${ cloudArea.ap_name }` }}
-        </div>
-        <div class="collapse-container" slot>
-          <StrategyTable
-            :has-cloud="!!cloudArea.bk_cloud_name"
-            :host-type="cloudArea.type"
-            :area="cloudArea">
-          </StrategyTable>
-        </div>
-      </RightPanel>
+      <template v-if="cloudAreaList.length === 1">
+        <StrategyTable
+          v-for="cloudArea in cloudAreaList"
+          :key="`${cloudArea.bk_cloud_id}_${cloudArea.ap_id}`"
+          :has-cloud="!!cloudArea.bk_cloud_name"
+          :host-type="cloudArea.type"
+          :area="cloudArea">
+        </StrategyTable>
+      </template>
+      <template v-else>
+        <RightPanel
+          v-for="cloudArea in cloudAreaList"
+          :key="`${cloudArea.bk_cloud_id}_${cloudArea.ap_id}`"
+          :class="['cloud-panel-item', { 'is-close': !cloudArea.collapse }]"
+          :need-border="false"
+          :icon-style="{ padding: '4px 4px', fontSize: '12px' }"
+          collapse-color="#979BA5"
+          title-bg-color="#F0F1F5"
+          :collapse="cloudArea.collapse"
+          :type="`${cloudArea.bk_cloud_id}_${cloudArea.ap_id}`"
+          @change="handleToggle">
+          <div class="collapse-header" slot="title">
+            {{ `${ cloudArea.bk_cloud_name } - ${ cloudArea.ap_name }` }}
+          </div>
+          <div class="collapse-container" slot>
+            <StrategyTable
+              :has-cloud="!!cloudArea.bk_cloud_name"
+              :host-type="cloudArea.type"
+              :area="cloudArea">
+            </StrategyTable>
+          </div>
+        </RightPanel>
+      </template>
     </div>
     <div class="mt15" v-else>
       <StrategyTable :host-type="hostType === 'mixed' ? 'Agent' : hostType"></StrategyTable>
